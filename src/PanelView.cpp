@@ -294,7 +294,11 @@ void layout(Canvas& c, const PanelModel& model, const PanelIcons& icons, const D
         c.text(ImVec2(x, c.y() + c.px(1.0f)), true, kSmall, kAccent, pinned);
     }
     c.advance(titleHeight);
-    c.advance(c.text(ImVec2(c.left(), c.y()), false, kSmall, kMuted, model.status, inner) + c.px(10.0f));
+    c.advance(c.text(ImVec2(c.left(), c.y()), false, kSmall, kMuted, model.status, inner) + c.px(2.0f));
+    if (!model.you.empty()) {
+        c.advance(c.text(ImVec2(c.left(), c.y()), false, kSmall, kTip, model.you, inner));
+    }
+    c.advance(c.px(8.0f));
 
     c.heading("BUY NEXT");
     if (model.suggestions.empty()) {

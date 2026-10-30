@@ -151,6 +151,7 @@ void parse(const nlohmann::json& j, AppConfig& cfg)
         readKey(h, "debug_dump", cfg.hotkeys.debugDump);
         readKey(h, "tune_scale", cfg.hotkeys.tuneScale);
         readKey(h, "pin_panel", cfg.hotkeys.pinPanel);
+        readKey(h, "menu", cfg.hotkeys.menu);
     }
     if (j.contains("enemy_roi")) {
         cfg.enemyRoi = readRect(j["enemy_roi"], cfg.enemyRoi);
@@ -164,6 +165,9 @@ void parse(const nlohmann::json& j, AppConfig& cfg)
     cfg.heroTemplateDir = j.value("hero_template_dir", cfg.heroTemplateDir.string());
     cfg.heroThreshold = j.value("hero_threshold", cfg.heroThreshold);
     cfg.heroMargin = j.value("hero_margin", cfg.heroMargin);
+    if (j.contains("ally_names")) {
+        cfg.allyNames = readRowSet(j["ally_names"], NormRect{0.0, 0.0, 0.05, 0.02});
+    }
     cfg.archetypeShare = j.value("archetype_share", cfg.archetypeShare);
     cfg.archetypeMinItems = j.value("archetype_min_items", cfg.archetypeMinItems);
     if (j.contains("panel")) {
@@ -172,9 +176,67 @@ void parse(const nlohmann::json& j, AppConfig& cfg)
     }
 }
 
+// The settings the menu can change, in config.json's own layout.
+nlohmann::json menuSettings(const AppConfig& cfg)
+{
+    nlohmann::json j{
+        {"capture_delay_ms", cfg.captureDelayMs},
+        {"scan_threads", cfg.scanThreads},
+        {"match_threshold", cfg.matchThreshold},
+        {"hero_threshold", cfg.heroThreshold},
+        {"hero_margin", cfg.heroMargin},
+        {"max_suggestions", cfg.maxSuggestions},
+        {"panel", {{"x", cfg.panelX}, {"y", cfg.panelY}}},
+        {"hotkeys",
+         {{"scoreboard", keyName(cfg.hotkeys.scoreboard)},
+          {"calibrate", keyName(cfg.hotkeys.calibrate)},
+          {"reload", keyName(cfg.hotkeys.reload)},
+          {"debug_dump", keyName(cfg.hotkeys.debugDump)},
+          {"tune_scale", keyName(cfg.hotkeys.tuneScale)},
+          {"pin_panel", keyName(cfg.hotkeys.pinPanel)},
+          {"menu", keyName(cfg.hotkeys.menu)}}},
+    };
+    if (!cfg.enemyRows.empty()) {
+        const NormRect& first = cfg.enemyRows.front();
+        const NormRect& next = cfg.enemyRows.size() > 1 ? cfg.enemyRows[1] : first;
+        j["enemy_rows"] = {{"first", {{"x", first.x}, {"y", first.y}, {"w", first.w}, {"h", first.h}}},
+                           {"count", cfg.enemyRows.size()},
+                           {"step_x", next.x - first.x},
+                           {"step_y", next.y - first.y}};
+    }
+    return j;
+}
+
+std::filesystem::path settingsFile(const std::filesystem::path& configFile)
+{
+    return configFile.parent_path() / "settings.json";
+}
+
 }  // namespace
 
-ConfigLoad loadConfig(const std::filesystem::path& file)
+bool saveSettings(const std::filesystem::path& configFile, const AppConfig& cfg)
+{
+    const nlohmann::json base = menuSettings(loadConfig(configFile, false).config);
+    const nlohmann::json current = menuSettings(cfg);
+    nlohmann::json changed = nlohmann::json::object();
+    for (const auto& [key, value] : current.items()) {
+        if (!base.contains(key) || base[key] != value) {
+            changed[key] = value;
+        }
+    }
+    std::ofstream out(settingsFile(configFile), std::ios::trunc);
+    out << changed.dump(2) << '\n';
+    return static_cast<bool>(out);
+}
+
+bool resetSettings(const std::filesystem::path& configFile)
+{
+    std::error_code ec;
+    std::filesystem::remove(settingsFile(configFile), ec);
+    return !ec;
+}
+
+ConfigLoad loadConfig(const std::filesystem::path& file, bool withOverrides)
 {
     ConfigLoad out;
     std::ifstream in(file);
@@ -193,12 +255,23 @@ ConfigLoad loadConfig(const std::filesystem::path& file)
     }
 
     const auto calibration = file.parent_path() / "calibration.json";
-    if (out.error.empty() && std::filesystem::exists(calibration)) {
+    if (withOverrides && out.error.empty() && std::filesystem::exists(calibration)) {
         try {
             std::ifstream calibrationIn(calibration);
             out.config.iconScale = nlohmann::json::parse(calibrationIn).value("icon_scale", out.config.iconScale);
         } catch (const nlohmann::json::exception& e) {
             std::cerr << "[config] ignoring broken calibration.json: " << e.what() << '\n';
+        }
+    }
+    const auto settings = settingsFile(file);
+    if (withOverrides && out.error.empty() && std::filesystem::exists(settings)) {
+        const AppConfig beforeSettings = out.config;
+        try {
+            std::ifstream settingsIn(settings);
+            parse(nlohmann::json::parse(settingsIn), out.config);
+        } catch (const nlohmann::json::exception& e) {
+            out.config = beforeSettings;  // never keep a half-applied file
+            std::cerr << "[config] ignoring broken settings.json: " << e.what() << '\n';
         }
     }
     validate(out.config);
@@ -213,6 +286,11 @@ bool saveCalibration(const std::filesystem::path& configFile, double iconScale)
                .dump(2)
         << '\n';
     return static_cast<bool>(out);
+}
+
+bool isNamedKey(int vk)
+{
+    return keyFromName(keyName(vk)) == vk;
 }
 
 std::string keyName(int vk)

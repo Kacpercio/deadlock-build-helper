@@ -1,5 +1,6 @@
 #include "Overlay.h"
 
+#include "SettingsMenu.h"
 #include "VisionEngine.h"
 
 #include <dwmapi.h>
@@ -69,6 +70,7 @@ Overlay::~Overlay()
         ImGui::DestroyContext();
     }
     icons_.clear();
+    preview_.Reset();
     rtv_.Reset();
     swapChain_.Reset();
     context_.Reset();
@@ -107,6 +109,7 @@ bool Overlay::init()
     }
 
     ImGui::StyleColorsDark();
+    applyMenuStyle();
     ImGui::GetStyle().ScaleAllSizes(scale);
 
     ImGui_ImplWin32_Init(hwnd_);
@@ -122,6 +125,7 @@ bool Overlay::createWindow()
     wc.lpfnWndProc = wndProc;
     wc.hInstance = GetModuleHandleW(nullptr);
     wc.lpszClassName = kClassName;
+    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     if (!RegisterClassExW(&wc)) {
         return false;
     }
@@ -217,6 +221,74 @@ RECT Overlay::panelBounds(const OverlayModel& model) const
             rect_.bottom};
 }
 
+void Overlay::setInteractive(bool interactive)
+{
+    if (interactive == interactive_) {
+        return;
+    }
+    interactive_ = interactive;
+
+    LONG_PTR style = GetWindowLongPtrW(hwnd_, GWL_EXSTYLE);
+    constexpr LONG_PTR kPassThrough = WS_EX_TRANSPARENT | WS_EX_NOACTIVATE;
+    style = interactive ? (style & ~kPassThrough) : (style | kPassThrough);
+    SetWindowLongPtrW(hwnd_, GWL_EXSTYLE, style);
+    SetWindowPos(hwnd_, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+
+    ImGuiIO& io = ImGui::GetIO();
+    if (interactive) {
+        io.ConfigFlags &= ~ImGuiConfigFlags_NoMouse;
+        previousForeground_ = GetForegroundWindow();
+        setBounds(rect_);
+        ShowWindow(hwnd_, SW_SHOW);
+        windowShown_ = true;
+        // Windows only lets the foreground thread hand over focus, and that is the game's. Sharing
+        // its input state for a moment makes this allowed; nothing is sent to the game.
+        const DWORD foregroundThread = GetWindowThreadProcessId(previousForeground_, nullptr);
+        const DWORD thisThread = GetCurrentThreadId();
+        AttachThreadInput(thisThread, foregroundThread, TRUE);
+        SetForegroundWindow(hwnd_);
+        SetFocus(hwnd_);
+        AttachThreadInput(thisThread, foregroundThread, FALSE);
+    } else {
+        io.ConfigFlags |= ImGuiConfigFlags_NoMouse;
+        if (previousForeground_ && IsWindow(previousForeground_)) {
+            SetForegroundWindow(previousForeground_);
+        }
+        previousForeground_ = nullptr;
+    }
+    drawnRevision_.clear();
+}
+
+bool Overlay::hasFocus() const
+{
+    return GetForegroundWindow() == hwnd_;
+}
+
+ImTextureID Overlay::setPreview(const cv::Mat& bgr)
+{
+    preview_.Reset();
+    if (bgr.empty()) {
+        return ImTextureID{};
+    }
+    cv::Mat rgba;
+    cv::cvtColor(bgr, rgba, cv::COLOR_BGR2RGBA);
+
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = static_cast<UINT>(rgba.cols);
+    desc.Height = static_cast<UINT>(rgba.rows);
+    desc.MipLevels = desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_IMMUTABLE;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    const D3D11_SUBRESOURCE_DATA data{rgba.data, static_cast<UINT>(rgba.step), 0};
+    ComPtr<ID3D11Texture2D> texture;
+    if (SUCCEEDED(device_->CreateTexture2D(&desc, &data, &texture))) {
+        device_->CreateShaderResourceView(texture.Get(), nullptr, &preview_);
+    }
+    return reinterpret_cast<ImTextureID>(preview_.Get());
+}
+
 void Overlay::setIconFolders(std::filesystem::path items, std::filesystem::path heroes)
 {
     itemFolder_ = std::move(items);
@@ -291,7 +363,8 @@ void Overlay::keepOnTop()
 
 void Overlay::render(const OverlayModel& model)
 {
-    const bool hasContent = model.visible || model.calibrating;
+    const bool menuOpen = static_cast<bool>(model.menu);
+    const bool hasContent = model.visible || model.calibrating || menuOpen;
 
     // Nothing on screen now and nothing last frame: skip the GPU work entirely.
     if (!hasContent && !lastFrameHadContent_) {
@@ -300,7 +373,7 @@ void Overlay::render(const OverlayModel& model)
     }
     // Same picture as already on screen: drawing it again would only make DWM recomposite the
     // desktop for nothing, once per monitor refresh.
-    if (hasContent && model.revision == drawnRevision_ && framesToDraw_ == 0) {
+    if (hasContent && !menuOpen && model.revision == drawnRevision_ && framesToDraw_ == 0) {
         Sleep(16);
         return;
     }
@@ -310,10 +383,10 @@ void Overlay::render(const OverlayModel& model)
     }
     if (hasContent) {
         // Only calibration needs the whole monitor. The smaller the window, the less DWM has to blend.
-        setBounds(model.calibrating ? rect_ : panelBounds(model));
+        setBounds(model.calibrating || menuOpen ? rect_ : panelBounds(model));
     }
     if (hasContent && !windowShown_) {
-        ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+        ShowWindow(hwnd_, interactive_ ? SW_SHOW : SW_SHOWNOACTIVATE);
         keepOnTop();
         windowShown_ = true;
     }
@@ -321,10 +394,12 @@ void Overlay::render(const OverlayModel& model)
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
-    if (hasContent) {
+    if (menuOpen) {
+        model.menu();
+    } else if (hasContent) {
         drawPanelView(model);
     }
-    if (model.calibrating) {
+    if (model.calibrating && !menuOpen) {
         drawCalibration(model);
     }
     ImGui::Render();

@@ -20,6 +20,7 @@ struct Hotkeys {
     int debugDump = 0x78;   // VK_F9
     int tuneScale = 0x75;   // VK_F6
     int pinPanel = 0x74;    // VK_F5
+    int menu = 0x79;        // VK_F10
 };
 
 struct AppConfig {
@@ -46,6 +47,9 @@ struct AppConfig {
     double heroThreshold = 0.80;
     double heroMargin = 0.25;    // how far the best hero must lead the next-best one
 
+    // Where your team's nicknames are; lets the helper find you by the picture of your nickname.
+    std::vector<NormRect> allyNames;
+
     // Build archetype: a slot (gun / spirit / vitality) owning this share of an enemy's items.
     double archetypeShare = 0.6;
     int archetypeMinItems = 3;
@@ -59,13 +63,22 @@ struct ConfigLoad {
     std::string error;  // empty on success
 };
 
-// Also applies calibration.json from the same folder (written by F6 scale tuning) when present.
-ConfigLoad loadConfig(const std::filesystem::path& file);
+// Also applies, from the same folder when present: calibration.json (written by F6 scale tuning) and
+// settings.json (written by the in-game menu), unless `withOverrides` is false.
+ConfigLoad loadConfig(const std::filesystem::path& file, bool withOverrides = true);
+
+// Writes what differs from config.json to settings.json next to it. It survives rebuilds, which
+// overwrite config.json. Returns false when the file cannot be written.
+bool saveSettings(const std::filesystem::path& configFile, const AppConfig& cfg);
+bool resetSettings(const std::filesystem::path& configFile);
 
 // Writes calibration.json next to config.json, so hand-written config.json stays untouched.
 bool saveCalibration(const std::filesystem::path& configFile, double iconScale);
 
 // "TAB", "F9", ... for a virtual-key code; "0x.." for keys without a name.
 std::string keyName(int vk);
+
+// True for keys config.json has a name for, the only ones that can be saved.
+bool isNamedKey(int vk);
 
 std::filesystem::path resolvePath(const std::filesystem::path& base, const std::filesystem::path& p);

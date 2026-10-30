@@ -14,7 +14,8 @@
     "reload": "F8",
     "debug_dump": "F9",
     "tune_scale": "F6",
-    "pin_panel": "F5"
+    "pin_panel": "F5",
+    "menu": "F10"
   },
 
   "template_dir": "assets/templates",
@@ -46,7 +47,7 @@
   // One box per ENEMY player's item strip; "first" is the enemy closest to the centre, the
   // others are stepped right by step_x. Check them in calibration mode (F7), apply edits with F8.
   "enemy_rows": {
-    "first": { "x": 0.5555, "y": 0.3040, "w": 0.0417, "h": 0.2706 },
+    "first": { "x": 0.5555, "y": 0.2890, "w": 0.0417, "h": 0.2856 },
     "count": 6,
     "step_x": 0.04586,
     "step_y": 0.0
@@ -62,6 +63,15 @@
     "step_x": 0.04586,
     "step_y": 0.0
   },
+  // Your team's NICKNAMES, closest to the centre first (they step left). Pick yours in the menu (F10):
+  // the helper then finds you by that picture, whichever hero or column you are in this match.
+  "ally_names": {
+    "first": { "x": 0.4021, "y": 0.1120, "w": 0.0458, "h": 0.0222 },
+    "count": 6,
+    "step_x": -0.04586,
+    "step_y": 0.0
+  },
+
   "hero_template_dir": "assets/heroes",
   // A portrait counts as a hero when it scores at least hero_threshold and leads the next-best
   // hero by hero_margin. Real portraits on 1080p frames: 0.88-0.95, leading by at least 0.40.

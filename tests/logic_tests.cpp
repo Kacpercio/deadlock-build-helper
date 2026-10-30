@@ -4,11 +4,16 @@
 #include "CounterDatabase.h"
 #include "PlayerAnalysis.h"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <string>
+
+namespace fs = std::filesystem;
 
 static int failures = 0;
 static int checks = 0;
@@ -56,7 +61,10 @@ int main(int, char** argv)
         // Column layout measured on a real 1080p scoreboard: enemies step right, same height.
         CHECK(l.config.enemyRows.size() == 6);
         CHECK(near(l.config.enemyRows[5].x, 0.5555 + 5 * 0.04586));
-        CHECK(near(l.config.enemyRows[5].y, 0.3040));
+        CHECK(near(l.config.enemyRows[5].y, 0.2890));
+        CHECK(l.config.allyNames.size() == 6);
+        CHECK(near(l.config.allyNames[1].x, 0.4021 - 0.04586));
+        CHECK(l.config.hotkeys.menu == 0x79);
         CHECK(l.config.enemyPortraits.size() == 6);
         CHECK(near(l.config.enemyPortraits[2].x, 0.5555 + 2 * 0.04586));
         CHECK(near(l.config.enemyPortraits[2].y, 0.0));
@@ -230,6 +238,54 @@ int main(int, char** argv)
 
     // A failed load keeps the previous tables.
     CHECK(!db.load(writeTemp("dbh_badcounters.json", "{ nope")));
+    {
+        // What you own is never suggested.
+        SuggestInput in;
+        in.heroes = {{"haze", 1}};
+        const auto before = db.suggest(in, 6);
+        CHECK(!before.empty() && !before[0].itemId.empty());
+        in.owned.insert(before[0].itemId);
+        const auto after = db.suggest(in, 6);
+        CHECK(std::ranges::none_of(after, [&](const Suggestion& s) { return s.itemId == before[0].itemId; }));
+    }
+
+    // ---- settings.json: only what differs from config.json, surviving a failed read ----------
+    {
+        const fs::path dir = fs::temp_directory_path() / "dbh_settings";
+        fs::remove_all(dir);
+        fs::create_directories(dir);
+        const fs::path file = dir / "config.json";
+        std::ofstream(file) << R"({"match_threshold": 0.9, "scan_threads": 2,
+            "enemy_rows": {"first": {"x": 0.5, "y": 0.3, "w": 0.04, "h": 0.2}, "count": 3, "step_x": 0.05, "step_y": 0.0}})";
+
+        AppConfig cfg = loadConfig(file).config;
+        CHECK(saveSettings(file, cfg));
+        CHECK(nlohmann::json::parse(std::ifstream(dir / "settings.json")).empty());  // nothing changed
+
+        cfg.matchThreshold = 0.85;
+        cfg.hotkeys.menu = 0x7A;  // F11
+        for (auto& r : cfg.enemyRows) r.y = 0.28;
+        CHECK(saveSettings(file, cfg));
+        const auto saved = nlohmann::json::parse(std::ifstream(dir / "settings.json"));
+        CHECK(saved.contains("match_threshold") && !saved.contains("scan_threads") && saved.contains("enemy_rows"));
+
+        const AppConfig back = loadConfig(file).config;
+        CHECK(near(back.matchThreshold, 0.85));
+        CHECK(back.hotkeys.menu == 0x7A);
+        CHECK(back.enemyRows.size() == 3 && near(back.enemyRows[2].y, 0.28) && near(back.enemyRows[2].x, 0.6));
+        CHECK(near(loadConfig(file, false).config.matchThreshold, 0.9));  // config.json itself is untouched
+
+        std::ofstream(dir / "settings.json") << "{ broken";
+        CHECK(near(loadConfig(file).config.matchThreshold, 0.9));
+
+        CHECK(resetSettings(file));
+        CHECK(!fs::exists(dir / "settings.json"));
+
+        CHECK(isNamedKey(0x74));   // F5
+        CHECK(!isNamedKey(0x01));  // left mouse button
+        CHECK(!isNamedKey(0x1B));  // escape
+    }
+
     CHECK(db.size() == 173 && db.heroCount() == 44);
     CHECK(!db.load(writeTemp("dbh_noitems.json", R"({"heroes":{}})")));
     CHECK(db.size() == 173);

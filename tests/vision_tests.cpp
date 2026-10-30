@@ -37,12 +37,12 @@ static int checks = 0;
     } while (0)
 
 // Measured on a real 1080p scoreboard: 27 px item icons, two per row, 35 px apart, starting
-// 10 px right of / 6 px below the top-left of each item box; hero card art (280x380) starts at the
+// 10 px right of / 22 px below the top-left of each item box; hero card art (280x380) starts at the
 // top of the screen, 5 px into the portrait box, drawn at 0.25-0.29x.
 constexpr int kIcon = 27;
 constexpr int kPitch = 35;
 constexpr int kOffsetX = 10;
-constexpr int kOffsetY = 6;
+constexpr int kOffsetY = 22;
 const cv::Size kArt(280, 380);
 constexpr int kArtOffsetX = 5;
 constexpr int kRefHeight = 1080;
@@ -173,6 +173,43 @@ int main(int, char** argv)
         CHECK(readImage(odd / "missing.png").empty());
         VisionEngine e({});
         CHECK(e.loadTemplates(odd) == 1);
+    }
+
+    // ---- Your nickname: found by its picture, whatever is behind it --------------------------
+    {
+        const auto drawNames = [](const cv::Scalar& background, const std::vector<const char*>& names) {
+            cv::Mat frame(1080, 1920, CV_8UC3, background);
+            cv::randn(frame, background, cv::Scalar::all(5));
+            for (size_t i = 0; i < names.size(); ++i) {
+                cv::putText(frame, names[i], {684 - static_cast<int>(i) * 88 + 90, 138}, cv::FONT_HERSHEY_SIMPLEX, 0.42,
+                            cv::Scalar(235, 235, 235), 1, cv::LINE_AA);
+            }
+            return frame;
+        };
+        const auto boxes = toPixels(cfg.allyNames, cv::Size(1920, 1080));
+        const cv::Mat first = drawNames(cv::Scalar(30, 50, 70), {"HIXI1", "Infernus", "xKacper", "Bot"});
+        const NameTemplate name = makeNameTemplate(first, boxes[2]);
+        CHECK(!name.empty());
+        CHECK(findName(first, boxes, name) == 2);
+
+        // Next match: other column, other surroundings.
+        const cv::Mat later = drawNames(cv::Scalar(60, 40, 35), {"Bot", "xKacper", "HIXI1"});
+        double score = 0.0;
+        CHECK(findName(later, boxes, name, &score) == 1);
+        CHECK(score > 0.9);
+
+        // Not on the scoreboard, and nothing to look for.
+        CHECK(findName(drawNames(cv::Scalar(30, 50, 70), {"HIXI1", "Infernus"}), boxes, name) == -1);
+        CHECK(findName(first, boxes, NameTemplate{}) == -1);
+
+        const fs::path file = tmp / "my_name.png";
+        CHECK(saveNameTemplate(file, name));
+        const NameTemplate back = loadNameTemplate(file);
+        CHECK(findName(later, boxes, back) == 1);
+        CHECK(loadNameTemplate(tmp / "missing.png").empty());
+
+        // Too dark to hold any text.
+        CHECK(makeNameTemplate(cv::Mat(1080, 1920, CV_8UC3, cv::Scalar(10, 10, 10)), boxes[0]).empty());
     }
 
     // ---- Templates: every real item id and hero id ---------------------------------------

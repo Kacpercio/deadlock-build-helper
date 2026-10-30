@@ -9,7 +9,10 @@
 #include <d3d11.h>
 #include <wrl/client.h>
 
+#include <opencv2/core.hpp>
+
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -17,6 +20,7 @@
 struct OverlayModel {
     bool visible = false;      // the suggestion panel
     bool calibrating = false;  // row outlines + live detections + banner (implies the panel)
+    std::function<void()> menu;  // set: the settings menu is open and takes the mouse and keyboard
     std::string revision;      // changes whenever the content below does; nothing is redrawn otherwise
     PanelModel panel;
     float panelX = 0.02f;  // panel top-left corner, normalized to the monitor
@@ -53,6 +57,14 @@ public:
     // Where the panel finds its item and hero pictures.
     void setIconFolders(std::filesystem::path items, std::filesystem::path heroes);
 
+    // Normally the window lets everything through to the game. For the settings menu it takes over
+    // the mouse and keyboard, and gives them back afterwards.
+    void setInteractive(bool interactive);
+    bool hasFocus() const;
+
+    // Uploads a BGR picture for the menu; replaces the previous one.
+    ImTextureID setPreview(const cv::Mat& bgr);
+
 private:
     bool createWindow();
     bool createDevice();
@@ -67,6 +79,9 @@ private:
     RECT rect_;    // the monitor
     RECT bounds_;  // the window, in the same coordinates
     HWND hwnd_ = nullptr;
+    HWND previousForeground_ = nullptr;
+    bool interactive_ = false;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> preview_;
     PanelStyle panelStyle_;
     std::filesystem::path itemFolder_;
     std::filesystem::path heroFolder_;

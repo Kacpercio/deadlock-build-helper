@@ -30,6 +30,7 @@ add_executable(DeadlockBuildHelper
     src/ScreenCapture.cpp
     src/AnalysisWorker.cpp
     src/PanelView.cpp
+    src/SettingsMenu.cpp
     src/Overlay.cpp
 )
 

@@ -3,6 +3,7 @@
 #include "Config.h"
 #include "CounterDatabase.h"
 #include "HeroRecognizer.h"
+#include "PlayerAnalysis.h"
 #include "ScreenCapture.h"
 #include "Types.h"
 #include "VisionEngine.h"
@@ -22,6 +23,7 @@
 struct ConfigSnapshot {
     AppConfig config;
     std::string summary;  // what the last load/reload did, for the console and the overlay
+    bool nicknameSet = false;
     std::uint64_t version = 0;
 };
 
@@ -42,6 +44,13 @@ public:
     // Finds the icon scale that matches the open scoreboard, applies it and saves calibration.json.
     void requestScaleTune();
 
+    // Saves these settings to settings.json and runs with them from the next scan on.
+    void requestSettings(AppConfig settings);
+    void requestResetSettings();
+
+    // Remembers the nickname in this column of your team on the last scan as yours. -1 forgets it.
+    void requestPickMe(int allySlot);
+
     bool busy() const { return busy_.load(); }
 
     std::optional<AnalysisResult> takeIfNewer(std::uint64_t knownVersion);
@@ -55,6 +64,8 @@ private:
     std::string loadResources();
     void publishConfig(std::string summary);
     void applyThreadLimit() const;
+    void pickMe(int allySlot);
+    void addMe(const cv::Mat& frame, AnalysisResult& result, SuggestInput& input);
     void saveDebugImages(cv::Mat& frame, const cv::Rect& searchArea, const std::vector<cv::Rect>& rows,
                          const std::vector<cv::Rect>& portraits, const std::vector<Detection>& detections) const;
 
@@ -67,6 +78,9 @@ private:
     VisionEngine vision_;    // item icons
     HeroRecognizer heroes_;  // hero portraits
     CounterDatabase counters_;
+    NameTemplate myName_;
+    cv::Mat lastPreview_;
+    cv::Size lastFrameSize_;
 
     std::mutex mutex_;
     std::condition_variable_any wake_;
@@ -74,6 +88,9 @@ private:
     bool pendingDebug_ = false;
     bool pendingReload_ = false;
     bool pendingTune_ = false;
+    std::optional<AppConfig> pendingSettings_;
+    bool pendingResetSettings_ = false;
+    std::optional<int> pendingPick_;
     std::atomic<bool> busy_{false};
     AnalysisResult latest_;
     ConfigSnapshot publishedConfig_;

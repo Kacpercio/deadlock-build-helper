@@ -14,6 +14,7 @@ struct SuggestInput {
     std::map<std::string, int> items;       // enemy item id -> number of enemies owning it
     std::map<std::string, int> heroes;      // hero id -> number of enemies playing it
     std::map<std::string, int> archetypes;  // "weapon" / "spirit" / "vitality" -> number of such builds
+    std::set<std::string> owned;            // item ids you already have: never suggested
 };
 
 // counters.json: enemy items, enemy build archetypes and enemy heroes, each mapped to the

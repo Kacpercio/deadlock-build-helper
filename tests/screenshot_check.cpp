@@ -1,11 +1,13 @@
 // Runs the helper's whole recognition pipeline on a saved screenshot - no game, no Windows APIs:
 //
 //   screenshot_check <screenshot.png> <assets dir> [--allies] [--thorough] [--threads n] [--out annotated.png]
+//                    [--save-name column file.png] [--my-name file.png]
 //
 // Uses config.json (+ calibration.json), the templates and counters.json from <assets dir>,
 // exactly like the app. --allies also reads your own team's columns (the enemy boxes mirrored
 // around the screen centre), handy when the screenshot only shows items on your side.
 // --thorough uses the full template search instead of the fast scan, to compare the two.
+// --save-name saves the nickname in a column of your team; --my-name looks for a saved one.
 #include "Config.h"
 #include "CounterDatabase.h"
 #include "HeroRecognizer.h"
@@ -27,14 +29,6 @@ namespace fs = std::filesystem;
 
 namespace {
 
-std::vector<NormRect> mirrored(std::vector<NormRect> boxes)
-{
-    for (auto& b : boxes) {
-        b.x = 1.0 - b.x - b.w;
-    }
-    return boxes;
-}
-
 struct Side {
     const char* name;
     std::vector<NormRect> rows;
@@ -53,10 +47,17 @@ int main(int argc, char** argv)
     const fs::path assets = argv[2];
     bool allies = false;
     bool thorough = false;
+    int saveSlot = -1;
+    fs::path nameFile;
     fs::path out = "screenshot_check.png";
     for (int i = 3; i < argc; ++i) {
         if (std::strcmp(argv[i], "--allies") == 0) {
             allies = true;
+        } else if (std::strcmp(argv[i], "--save-name") == 0 && i + 2 < argc) {
+            saveSlot = std::atoi(argv[++i]);
+            nameFile = argv[++i];
+        } else if (std::strcmp(argv[i], "--my-name") == 0 && i + 1 < argc) {
+            nameFile = argv[++i];
         } else if (std::strcmp(argv[i], "--thorough") == 0) {
             thorough = true;
         } else if (std::strcmp(argv[i], "--threads") == 0 && i + 1 < argc) {
@@ -90,6 +91,16 @@ int main(int argc, char** argv)
     std::vector<Side> sides{{"enemies", cfg.enemyRows, cfg.enemyPortraits}};
     if (allies) {
         sides.push_back({"your team", mirrored(cfg.enemyRows), mirrored(cfg.enemyPortraits)});
+    }
+
+    if (!nameFile.empty()) {
+        const auto names = toPixels(cfg.allyNames, frame.size());
+        if (saveSlot >= 0) {
+            saveNameTemplate(nameFile, makeNameTemplate(frame, names.at(static_cast<size_t>(saveSlot))));
+        }
+        double score = 0.0;
+        const int found = findName(frame, names, loadNameTemplate(nameFile), &score);
+        std::printf("your nickname: column %d of your team, score %.3f\n", found, score);
     }
 
     cv::Mat annotated = frame.clone();

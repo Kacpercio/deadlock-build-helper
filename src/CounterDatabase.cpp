@@ -160,6 +160,9 @@ std::vector<Suggestion> CounterDatabase::suggest(const SuggestInput& input, size
     out.reserve(byItem.size());
     for (auto& [_, s] : byItem) {
         if (const auto id = itemIdByName_.find(s.item); id != itemIdByName_.end()) {
+            if (input.owned.contains(id->second)) {
+                continue;
+            }
             const Entry& item = items_.at(id->second);
             s.itemId = id->second;
             s.slot = item.slot;

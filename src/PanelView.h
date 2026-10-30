@@ -11,6 +11,7 @@
 // What the panel shows. It only needs Dear ImGui, so it can be rendered without Windows or D3D.
 struct PanelModel {
     std::string status;
+    std::string you;         // about you, empty when no nickname has been picked
     bool pinned = false;     // stays on screen after TAB is released
     bool perPlayer = false;  // more than one enemy column configured: list items per enemy
     std::vector<EnemyItem> enemyItems;

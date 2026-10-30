@@ -2,10 +2,12 @@
 #include "Config.h"
 #include "Overlay.h"
 #include "ScreenCapture.h"
+#include "SettingsMenu.h"
 
 #include <windows.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
@@ -13,7 +15,9 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <optional>
 #include <string>
+#include <utility>
 
 namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
@@ -105,6 +109,17 @@ std::string statusLine(const AnalysisResult& r, bool busy)
                        r.elapsedMs, r.warning.empty() ? "" : " | ", r.warning);
 }
 
+std::string aboutYou(const AnalysisResult& r)
+{
+    if (!r.nicknameSet || r.version == 0) {
+        return {};
+    }
+    if (r.mySlot < 0) {
+        return "You: not found on the scoreboard";
+    }
+    return std::format("You: {}, {} items owned", r.myHero.empty() ? "hero not recognised" : r.myHero, r.myItems);
+}
+
 std::string calibrationBanner(const Hotkeys& keys)
 {
     return std::format("CALIBRATION   hold {}: live scan   {}+{}: auto icon size   {}: reload config   "
@@ -156,8 +171,23 @@ int main()
     std::string notice;
     Clock::time_point noticeUntil{};
 
-    KeyEdge scoreboardKey, debugKey, reloadKey, calibrateKey, tuneKey, pinKey;
+    KeyEdge scoreboardKey, debugKey, reloadKey, calibrateKey, tuneKey, pinKey, menuKey;
     bool pinned = false;
+
+    SettingsMenu menu;
+    bool menuOpen = false;
+    bool reopenMenuValues = false;   // the settings were reset: show the new values once they arrive
+    bool nicknameSet = false;
+    std::optional<int> pickedSlot;   // chosen in the menu since the last scan
+    std::array<bool, 256> keyWasDown{};
+    Clock::time_point menuOpenedAt{};
+    ImTextureID previewTexture{};
+    std::uint64_t previewVersion = 0;
+    const auto closeMenu = [&] {
+        overlay.setInteractive(false);
+        menuOpen = false;
+    };
+
     bool scannedThisPress = false;
     bool calibrating = false;
     Clock::time_point scoreboardDownSince{};
@@ -178,12 +208,16 @@ int main()
             gameTitle = widen(cfg.gameWindowTitle);
             banner = calibrationBanner(cfg.hotkeys);
             overlay.setIconFolders(resolvePath(root, cfg.templateDir), resolvePath(root, cfg.heroTemplateDir));
+            nicknameSet = snapshot->nicknameSet;
+            if (std::exchange(reopenMenuValues, false)) {
+                menu.open(cfg);
+            }
             notice = std::move(snapshot->summary);
             noticeUntil = now + std::chrono::seconds(4);
             std::cout << "[config] " << notice << '\n';
         }
 
-        const bool gameFocused = isGameForeground(gameTitle);
+        const bool gameFocused = !menuOpen && isGameForeground(gameTitle);
         const bool scoreboardDown = gameFocused && keyDown(cfg.hotkeys.scoreboard);
 
         // One scan per scoreboard press, once it has had time to fade in.
@@ -221,8 +255,36 @@ int main()
             pinned = !pinned;
         }
 
+        // Edge of the key itself: while a new hotkey is being chosen it must not count as "pressed" later.
+        if (menuKey.pressed(keyDown(cfg.hotkeys.menu))) {
+            if (gameFocused) {
+                menu.open(cfg);
+                overlay.setInteractive(true);
+                menuOpen = true;
+                menuOpenedAt = now;
+                previewVersion = 0;
+            } else if (menuOpen && !menu.waitingForKey()) {
+                closeMenu();
+            }
+        }
+        if (menuOpen) {
+            for (int vk = 1; vk < static_cast<int>(keyWasDown.size()) - 1; ++vk) {
+                const bool down = keyDown(vk);
+                if (down && !keyWasDown[static_cast<size_t>(vk)] && menu.waitingForKey() && menu.keyPressed(vk).apply) {
+                    worker.requestSettings(menu.settings());
+                }
+                keyWasDown[static_cast<size_t>(vk)] = down;
+            }
+            // Never stay in the way: an interactive window covers the whole monitor.
+            if (now - menuOpenedAt > std::chrono::seconds(1) && !overlay.hasFocus()) {
+                std::cout << "[menu] closed: it does not have the focus\n";
+                closeMenu();
+            }
+        }
+
         if (auto fresh = worker.takeIfNewer(shown.version)) {
             shown = std::move(*fresh);
+            pickedSlot.reset();
         }
 
         if (gameFocused && now - lastTopmost > std::chrono::seconds(2)) {
@@ -236,6 +298,7 @@ int main()
         model.calibrating = calibrating && gameFocused;
         if (model.visible || model.calibrating) {
             model.panel.status = now < noticeUntil ? notice : statusLine(shown, worker.busy());
+            model.panel.you = aboutYou(shown);
             model.panel.pinned = pinned;
             model.panel.perPlayer = cfg.enemyRows.size() > 1;
             model.panel.enemyItems = shown.enemyItems;
@@ -252,7 +315,40 @@ int main()
             model.detections = shown.detections;
             model.banner = banner;
         }
+
+        MenuActions menuActions;
+        if (menuOpen) {
+            if (previewVersion != shown.version) {
+                previewVersion = shown.version;
+                previewTexture = overlay.setPreview(shown.preview);
+            }
+            MenuContext context;
+            context.preview = previewTexture;
+            context.previewSize = shown.preview.size();
+            context.frameSize = shown.frameSize;
+            context.nicknameSet = nicknameSet;
+            context.justPicked = pickedSlot.has_value();
+            context.mySlot = pickedSlot.value_or(shown.mySlot);
+            context.myHero = shown.myHero;
+            context.notice = now < noticeUntil ? notice : std::string{};
+            model.menu = [&menu, &menuActions, context] { menuActions = menu.draw(context); };
+        }
         overlay.render(model);
+
+        if (menuActions.apply) {
+            worker.requestSettings(menu.settings());
+        }
+        if (menuActions.reset) {
+            worker.requestResetSettings();
+            reopenMenuValues = true;
+        }
+        if (menuActions.pickMe) {
+            worker.requestPickMe(*menuActions.pickMe);
+            pickedSlot = *menuActions.pickMe;
+        }
+        if (menuActions.close) {
+            closeMenu();
+        }
     }
     return 0;
 }

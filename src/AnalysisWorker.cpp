@@ -12,6 +12,7 @@
 #include <format>
 #include <iostream>
 #include <map>
+#include <utility>
 
 namespace fs = std::filesystem;
 
@@ -43,6 +44,33 @@ void AnalysisWorker::requestScan(bool saveDebugImages)
         pendingScan_ = true;
         pendingDebug_ = pendingDebug_ || saveDebugImages;
         busy_ = true;
+    }
+    wake_.notify_one();
+}
+
+void AnalysisWorker::requestSettings(AppConfig settings)
+{
+    {
+        std::lock_guard lock(mutex_);
+        pendingSettings_ = std::move(settings);
+    }
+    wake_.notify_one();
+}
+
+void AnalysisWorker::requestResetSettings()
+{
+    {
+        std::lock_guard lock(mutex_);
+        pendingResetSettings_ = true;
+    }
+    wake_.notify_one();
+}
+
+void AnalysisWorker::requestPickMe(int allySlot)
+{
+    {
+        std::lock_guard lock(mutex_);
+        pendingPick_ = allySlot;
     }
     wake_.notify_one();
 }
@@ -99,9 +127,15 @@ void AnalysisWorker::run(std::stop_token stop)
         bool debug = false;
         bool reloadFirst = false;
         bool tune = false;
+        bool resetSettingsFile = false;
+        std::optional<AppConfig> settings;
+        std::optional<int> pick;
         {
             std::unique_lock lock(mutex_);
-            const auto pending = [this] { return pendingScan_ || pendingReload_ || pendingTune_; };
+            const auto pending = [this] {
+                return pendingScan_ || pendingReload_ || pendingTune_ || pendingSettings_ || pendingResetSettings_ ||
+                       pendingPick_;
+            };
             if (!wake_.wait_for(lock, stop, kKeepCaptureOpen, pending)) {
                 if (stop.stop_requested()) {
                     return;
@@ -116,6 +150,19 @@ void AnalysisWorker::run(std::stop_token stop)
             reloadFirst = pendingReload_;
             tune = pendingTune_;
             pendingScan_ = pendingDebug_ = pendingReload_ = pendingTune_ = false;
+            resetSettingsFile = std::exchange(pendingResetSettings_, false);
+            settings = std::exchange(pendingSettings_, std::nullopt);
+            pick = std::exchange(pendingPick_, std::nullopt);
+        }
+
+        const fs::path configFile = root_ / "assets" / "config.json";
+        if (resetSettingsFile) {
+            reloadFirst = resetSettings(configFile) || reloadFirst;
+        } else if (settings) {
+            reloadFirst = saveSettings(configFile, *settings) || reloadFirst;
+        }
+        if (pick) {
+            pickMe(*pick);
         }
 
         if (reloadFirst) {
@@ -164,7 +211,7 @@ void AnalysisWorker::reload()
 
     cfg_ = std::move(loaded.config);
     applyThreadLimit();
-    std::string summary = "reloaded: " + loadResources();
+    std::string summary = "applied: " + loadResources();
     if (cfg_.monitorIndex != monitorIndex_) {
         summary += " (monitor_index needs a restart)";
     }
@@ -207,10 +254,65 @@ std::string AnalysisWorker::loadResources()
                                      ? 0
                                      : heroes.loadTemplates(resolvePath(root_, cfg_.heroTemplateDir), counters_.heroIds());
     heroes_ = std::move(heroes);
+    myName_ = loadNameTemplate(root_ / "assets" / "my_name.png");
 
     return std::format("{} item / {} hero templates, {} items + {} heroes in counters{}, {} enemy rows",
                        templates, heroTemplates, counters_.size(), counters_.heroCount(),
                        countersLoaded ? "" : " (counters.json not loaded)", cfg_.enemyRows.size());
+}
+
+void AnalysisWorker::pickMe(int allySlot)
+{
+    const fs::path file = root_ / "assets" / "my_name.png";
+    if (allySlot < 0) {
+        std::error_code ec;
+        fs::remove(file, ec);
+        myName_ = {};
+        publishConfig("nickname forgotten");
+        return;
+    }
+    const std::vector<cv::Rect> names = toPixels(cfg_.allyNames, lastFrameSize_);
+    if (lastPreview_.empty() || static_cast<size_t>(allySlot) >= names.size()) {
+        publishConfig("no scoreboard to read your nickname from: hold TAB in a match first");
+        return;
+    }
+    NameTemplate name = makeNameTemplate(lastPreview_, names[static_cast<size_t>(allySlot)]);
+    if (name.empty() || !saveNameTemplate(file, name)) {
+        publishConfig("could not save a nickname from that column");
+        return;
+    }
+    myName_ = std::move(name);
+    publishConfig("nickname saved");
+}
+
+void AnalysisWorker::addMe(const cv::Mat& frame, AnalysisResult& result, SuggestInput& input)
+{
+    result.nicknameSet = !myName_.empty();
+    if (myName_.empty()) {
+        return;
+    }
+    result.mySlot = findName(frame, toPixels(cfg_.allyNames, frame.size()), myName_);
+    if (result.mySlot < 0) {
+        return;
+    }
+
+    // Your column is laid out like an enemy's, on the other side of the screen.
+    const auto slot = static_cast<size_t>(result.mySlot);
+    const std::vector<cv::Rect> columns = toPixels(mirrored(cfg_.enemyRows), frame.size());
+    const std::vector<cv::Rect> portraits = toPixels(mirrored(cfg_.enemyPortraits), frame.size());
+    if (slot >= columns.size()) {
+        return;
+    }
+    std::vector<Detection> mine = vision_.scan(frame, {columns[slot]});
+    for (const auto& d : mine) {
+        input.owned.insert(d.itemId);
+    }
+    result.myItems = mine.size();
+    if (slot < portraits.size()) {
+        if (const HeroVerdict v = heroes_.recognize(frame, portraits[slot]); v.accepted) {
+            result.myHero = counters_.heroName(v.id);
+        }
+    }
 }
 
 void AnalysisWorker::publishConfig(std::string summary)
@@ -218,6 +320,7 @@ void AnalysisWorker::publishConfig(std::string summary)
     std::lock_guard lock(mutex_);
     publishedConfig_.config = cfg_;
     publishedConfig_.summary = std::move(summary);
+    publishedConfig_.nicknameSet = !myName_.empty();
     ++publishedConfig_.version;
 }
 
@@ -251,6 +354,7 @@ AnalysisResult AnalysisWorker::analyze(bool debug)
     }
 
     SuggestInput input;
+    addMe(*frame, result, input);
     result.players = describePlayers(detections, rows.size(), counters_,
                                      {cfg_.archetypeShare, cfg_.archetypeMinItems}, input);
     for (const auto& [id, n] : input.items) {
@@ -259,6 +363,13 @@ AnalysisResult AnalysisWorker::analyze(bool debug)
     std::ranges::stable_sort(result.enemyItems, std::greater{}, &EnemyItem::count);
     result.suggestions = counters_.suggest(input, static_cast<size_t>(cfg_.maxSuggestions));
     result.elapsedMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+
+    // Kept for the menu's preview and for picking your nickname. A copy: the debug images draw on the frame.
+    constexpr double kPreviewShare = 0.62;  // enough for the scoreboard's item strips
+    lastPreview_ = (*frame)(cv::Rect(0, 0, frame->cols, static_cast<int>(frame->rows * kPreviewShare))).clone();
+    lastFrameSize_ = frame->size();
+    result.preview = lastPreview_;
+    result.frameSize = lastFrameSize_;
 
     if (debug) {
         saveDebugImages(*frame, searchArea, rows, portraits, detections);

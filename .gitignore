@@ -13,6 +13,8 @@ CMakeSettings.json
 
 # Files the app writes while running
 calibration.json
+settings.json
+my_name.png
 debug_*.png
 *.log
 

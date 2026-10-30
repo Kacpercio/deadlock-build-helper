@@ -1,6 +1,6 @@
 #pragma once
 
-#include <opencv2/core/types.hpp>
+#include <opencv2/core.hpp>
 
 #include <cstdint>
 #include <string>
@@ -57,5 +57,15 @@ struct AnalysisResult {
     double elapsedMs = 0.0;
     std::string error;
     std::string warning;        // the scan ran, but something it needs is missing
+
+    // You, found by your nickname; only with a nickname picked in the menu.
+    bool nicknameSet = false;
+    int mySlot = -1;            // your column on your team, -1 = not found on the scoreboard
+    std::string myHero;         // display name, empty if not recognised
+    size_t myItems = 0;         // what you own is left out of the suggestions
+
+    // Top of the frame this came from (holds the scoreboard), and the frame's full size.
+    cv::Mat preview;
+    cv::Size frameSize;
     std::uint64_t version = 0;  // 0 = no scan has finished yet
 };

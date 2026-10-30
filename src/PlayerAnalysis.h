@@ -6,6 +6,7 @@
 #include "Types.h"
 #include "VisionEngine.h"
 
+#include <filesystem>
 #include <vector>
 
 struct ArchetypeRule {
@@ -33,6 +34,23 @@ void assignToRows(std::vector<Detection>& detections, const std::vector<cv::Rect
 std::vector<HeroVerdict> addHeroes(const HeroRecognizer& heroes, const cv::Mat& frameBgr,
                                    const std::vector<cv::Rect>& portraits, size_t rowCount,
                                    std::vector<Detection>& detections);
+
+// The same boxes on the other side of the screen: your team's columns, from the enemy's.
+std::vector<NormRect> mirrored(std::vector<NormRect> boxes);
+
+// A picture of your nickname as the scoreboard draws it: only the text counts, not what is behind it.
+struct NameTemplate {
+    cv::Mat gray;
+    cv::Mat mask;
+    bool empty() const { return gray.empty(); }
+};
+NameTemplate makeNameTemplate(const cv::Mat& frameBgr, cv::Rect box);
+bool saveNameTemplate(const std::filesystem::path& file, const NameTemplate& name);
+NameTemplate loadNameTemplate(const std::filesystem::path& file);
+
+// The box showing that nickname, or -1. `score` gets its match score, when given.
+int findName(const cv::Mat& frameBgr, const std::vector<cv::Rect>& boxes, const NameTemplate& name,
+             double* score = nullptr);
 
 // Turns one scan's detections (items and hero portraits, each with its row in `slot`) into one
 // EnemyPlayer per row that showed anything, and fills `input` for CounterDatabase::suggest.

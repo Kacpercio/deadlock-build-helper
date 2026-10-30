@@ -1,10 +1,18 @@
 #include "PlayerAnalysis.h"
 
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
+
 #include <algorithm>
 #include <string>
 #include <utility>
 
 namespace {
+
+// Measured on real frames: the same nickname scores 0.998 or more, other text at most 0.46.
+constexpr double kNameThreshold = 0.80;
+constexpr double kMinTextBrightness = 120.0;
+constexpr double kTextShareOfBrightest = 0.65;
 
 void addUnique(std::vector<std::string>& list, const std::string& value)
 {
@@ -62,6 +70,83 @@ void assignToRows(std::vector<Detection>& detections, const std::vector<cv::Rect
         d.slot = row != rows.end() ? static_cast<int>(row - rows.begin()) : -1;
     }
     std::erase_if(detections, [](const Detection& d) { return d.slot < 0; });
+}
+
+std::vector<NormRect> mirrored(std::vector<NormRect> boxes)
+{
+    for (auto& b : boxes) {
+        b.x = 1.0 - b.x - b.w;
+    }
+    return boxes;
+}
+
+NameTemplate makeNameTemplate(const cv::Mat& frameBgr, cv::Rect box)
+{
+    box &= cv::Rect(0, 0, frameBgr.cols, frameBgr.rows);
+    if (box.empty()) {
+        return {};
+    }
+    cv::Mat gray;
+    cv::cvtColor(frameBgr(box), gray, cv::COLOR_BGR2GRAY);
+
+    // The text is the brightest thing in the box; trim to it.
+    double brightest = 0.0;
+    cv::minMaxLoc(gray, nullptr, &brightest);
+    cv::Mat text;
+    cv::threshold(gray, text, std::max(kMinTextBrightness, brightest * kTextShareOfBrightest), 255, cv::THRESH_BINARY);
+    if (cv::countNonZero(text) == 0) {
+        return {};
+    }
+    constexpr int kPadding = 1;
+    const cv::Rect area = cv::Rect(cv::boundingRect(text).tl() - cv::Point(kPadding, kPadding),
+                                   cv::boundingRect(text).br() + cv::Point(kPadding, kPadding)) &
+                          cv::Rect(0, 0, gray.cols, gray.rows);
+    cv::Mat mask;
+    cv::dilate(text, mask, cv::Mat::ones(3, 3, CV_8U));
+    return {gray(area).clone(), mask(area).clone()};
+}
+
+bool saveNameTemplate(const std::filesystem::path& file, const NameTemplate& name)
+{
+    cv::Mat image;
+    cv::merge(std::vector<cv::Mat>{name.gray, name.gray, name.gray, name.mask}, image);
+    return writeImage(file, image);
+}
+
+NameTemplate loadNameTemplate(const std::filesystem::path& file)
+{
+    const cv::Mat image = readImage(file, cv::IMREAD_UNCHANGED);
+    if (image.empty() || image.channels() != 4 || image.depth() != CV_8U) {
+        return {};
+    }
+    std::vector<cv::Mat> channels;
+    cv::split(image, channels);
+    return {channels[0], channels[3]};
+}
+
+int findName(const cv::Mat& frameBgr, const std::vector<cv::Rect>& boxes, const NameTemplate& name, double* score)
+{
+    int found = -1;
+    double best = kNameThreshold;
+    cv::Mat gray, response;
+    for (size_t i = 0; i < boxes.size(); ++i) {
+        const cv::Rect box = boxes[i] & cv::Rect(0, 0, frameBgr.cols, frameBgr.rows);
+        if (name.empty() || box.width < name.gray.cols || box.height < name.gray.rows) {
+            continue;
+        }
+        cv::cvtColor(frameBgr(box), gray, cv::COLOR_BGR2GRAY);
+        matchNormed(gray, name.gray, name.mask, response);
+        double s = 0.0;
+        cv::minMaxLoc(response, nullptr, &s);
+        if (s >= best) {
+            best = s;
+            found = static_cast<int>(i);
+        }
+    }
+    if (score) {
+        *score = found >= 0 ? best : 0.0;
+    }
+    return found;
 }
 
 std::vector<HeroVerdict> addHeroes(const HeroRecognizer& heroes, const cv::Mat& frameBgr,
