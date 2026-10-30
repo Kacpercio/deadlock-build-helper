@@ -1,0 +1,41 @@
+#pragma once
+
+#include "Config.h"
+#include "CounterDatabase.h"
+#include "HeroRecognizer.h"
+#include "Types.h"
+#include "VisionEngine.h"
+
+#include <vector>
+
+struct ArchetypeRule {
+    double share = 0.6;  // one shop slot must hold at least this share of the items...
+    int minItems = 3;    // ...of an enemy with at least this many recognised items
+};
+
+// Settings for item icons and for hero portraits, taken from the app config.
+VisionConfig itemVisionConfig(const AppConfig& cfg);
+HeroConfig heroConfig(const AppConfig& cfg);
+
+// Normalized box -> pixels of a frame of `size`, clipped to the frame.
+cv::Rect toPixels(const NormRect& box, cv::Size size);
+std::vector<cv::Rect> toPixels(const std::vector<NormRect>& boxes, cv::Size size);  // keeps empty rects
+
+// Smallest rect containing all non-empty `rects`.
+cv::Rect boundingBox(const std::vector<cv::Rect>& rects);
+
+// Sets each detection's `slot` to the row its centre lies in and drops hits that fall between
+// rows (they belong to nobody's item bar). Empty rects in `rows` never match.
+void assignToRows(std::vector<Detection>& detections, const std::vector<cv::Rect>& rows);
+
+// Classifies portrait i as enemy i, appends the recognised heroes to `detections` and returns what
+// each box looked like, recognised or not.
+std::vector<HeroVerdict> addHeroes(const HeroRecognizer& heroes, const cv::Mat& frameBgr,
+                                   const std::vector<cv::Rect>& portraits, size_t rowCount,
+                                   std::vector<Detection>& detections);
+
+// Turns one scan's detections (items and hero portraits, each with its row in `slot`) into one
+// EnemyPlayer per row that showed anything, and fills `input` for CounterDatabase::suggest.
+std::vector<EnemyPlayer> describePlayers(const std::vector<Detection>& detections, size_t rowCount,
+                                         const CounterDatabase& counters, const ArchetypeRule& rule,
+                                         SuggestInput& input);

@@ -1,0 +1,31 @@
+# Build output and vcpkg packages
+/build/
+/build-*/
+/out/
+/vcpkg_installed/
+
+# Visual Studio / VS Code
+/.vs/
+/.vscode/
+*.user
+CMakeUserPresets.json
+CMakeSettings.json
+
+# Files the app writes while running
+calibration.json
+debug_*.png
+*.log
+
+# Game art: downloaded by tools/fetch_icons.py or cropped from your own screenshots
+/assets/templates/*.png
+/assets/heroes/*.png
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

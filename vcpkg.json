@@ -1,0 +1,22 @@
+{
+  "name": "deadlock-build-helper",
+  "version-string": "0.1.0",
+  "builtin-baseline": "4b8f5be45cc030d992f82a6bd811165acb02dd44",
+  "dependencies": [
+    {
+      "name": "opencv4",
+      "version>=": "4.14.0",
+      "default-features": false,
+      "features": ["png", "thread"]
+    },
+    {
+      "name": "imgui",
+      "version>=": "1.93.0",
+      "features": ["dx11-binding", "win32-binding"]
+    },
+    {
+      "name": "nlohmann-json",
+      "version>=": "3.12.0"
+    }
+  ]
+}

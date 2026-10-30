@@ -1,0 +1,82 @@
+{
+  "game_window_title": "Deadlock",
+  "monitor_index": 0,
+  "capture_delay_ms": 250,
+  "calibration_scan_ms": 400,
+
+  // Key names: TAB, SPACE, CAPSLOCK, SHIFT, CTRL, ALT, F1-F24, A-Z, 0-9, NUMPAD0-9,
+  // INSERT, DELETE, HOME, END, PAGEUP, PAGEDOWN, MOUSE3, MOUSE4, MOUSE5.
+  "hotkeys": {
+    "scoreboard": "TAB",
+    "calibrate": "F7",
+    "reload": "F8",
+    "debug_dump": "F9",
+    "tune_scale": "F6"
+  },
+
+  "template_dir": "assets/templates",
+  "counters_file": "assets/counters.json",
+
+  // Screen height (px) that the sizes below and your own template crops refer to.
+  "reference_height": 1080,
+  "match_threshold": 0.90,
+  // 1.0 = search at full resolution. The scoreboard icons are only 27 px tall at 1080p, and
+  // shrinking them further (e.g. 0.75) eats most of the matching margin.
+  "downscale": 1.0,
+  // Item icon height on the scoreboard at reference_height. Every item template is resized to
+  // it, so the 200 px icons from tools/fetch_icons.py work as well as your own 27 px crops.
+  // 0 = use each template at its own size.
+  "item_icon_size": 27,
+  // Share of each item icon's top-right corner to ignore: the scoreboard draws a tier badge
+  // there that the downloaded icons do not have.
+  "item_corner_mask": 0.5,
+  // Correction when icons on screen are bigger/smaller than the templates expect (HUD scale,
+  // wrong reference_height). Hold TAB and press F6 to measure it; the result is saved to
+  // calibration.json, which overrides this value.
+  "icon_scale": 1.0,
+
+  // Measured on the TAB scoreboard at 1920x1080: every player is a COLUMN at the top of the
+  // screen (portrait card, then stats, then a strip of item icons two wide). Your team is on
+  // the left, the enemy team on the right, starting just right of the kill counter.
+  // All values are fractions of the screen, so they hold at any 16:9 resolution.
+  //
+  // One box per ENEMY player's item strip; "first" is the enemy closest to the centre, the
+  // others are stepped right by step_x. Check them in calibration mode (F7), apply edits with F8.
+  "enemy_rows": {
+    "first": { "x": 0.5555, "y": 0.3040, "w": 0.0417, "h": 0.2706 },
+    "count": 6,
+    "step_x": 0.04586,
+    "step_y": 0.0
+  },
+
+  // One box per enemy HERO PORTRAIT, same order as enemy_rows (cyan in calibration mode).
+  // Measured on real frames: the portrait starts at the very top of the screen, about 7 px into
+  // its column. The box leaves a few pixels of slack around that, and stops above the level badge.
+  // Delete this block to turn hero recognition off.
+  "enemy_portraits": {
+    "first": { "x": 0.5555, "y": 0.0, "w": 0.0417, "h": 0.0667 },
+    "count": 6,
+    "step_x": 0.04586,
+    "step_y": 0.0
+  },
+  "hero_template_dir": "assets/heroes",
+  // A portrait counts as a hero when it scores at least hero_threshold and leads the next-best
+  // hero by hero_margin. Real portraits on 1080p frames: 0.88-0.95, leading by at least 0.40.
+  // Empty slots over the game world: at most 0.78, leading by at most 0.28.
+  "hero_threshold": 0.80,
+  "hero_margin": 0.25,
+
+  // An enemy counts as a gun / spirit / tank build when one shop slot holds at least this
+  // share of their items (and they own at least archetype_min_items); otherwise "Hybrid".
+  "archetype_share": 0.6,
+  "archetype_min_items": 3,
+
+  // Single search area, used only if "enemy_rows" is deleted (no per-enemy breakdown):
+  // all enemy item strips together.
+  "enemy_roi": { "x": 0.5545, "y": 0.3040, "w": 0.2758, "h": 0.2706 },
+
+  // Top-left corner of the overlay panel, as fractions of the screen. The panel is at most 17%
+  // of the screen wide, so at the left edge it stays clear of your team's scoreboard columns.
+  "panel": { "x": 0.004, "y": 0.12 },
+  "max_suggestions": 6
+}

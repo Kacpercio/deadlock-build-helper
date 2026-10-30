@@ -1,0 +1,55 @@
+#pragma once
+
+#include <opencv2/core/types.hpp>
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+// One icon found on screen. `box` is in full-frame (= monitor) pixel coordinates.
+struct Detection {
+    std::string itemId;  // item id, or hero id for portrait detections
+    cv::Rect box;
+    double score = 0.0;
+    int slot = -1;  // index of the enemy row it sits in; -1 until assigned
+    bool isHero = false;
+};
+
+// An enemy item aggregated across the scoreboard (e.g. 2 enemies own Healing Rite -> count 2).
+struct EnemyItem {
+    std::string itemId;
+    std::string displayName;
+    int count = 0;
+};
+
+// Everything known about one enemy's scoreboard row.
+struct EnemyPlayer {
+    int slot = 0;
+    std::string hero;    // display name, empty if the portrait was not recognised
+    std::string build;   // "Gun build" / "Spirit build" / "Tank build" / "Hybrid", empty with few items
+    int weaponItems = 0;
+    int spiritItems = 0;
+    int vitalityItems = 0;
+    std::vector<std::string> items;  // display names
+    std::vector<std::string> tips;   // how to play against their items
+    std::vector<std::string> avoid;  // items that do badly against their hero
+};
+
+// A recommended purchase. `answers` lists what it counters (items, heroes, builds).
+struct Suggestion {
+    std::string item;
+    std::string reason;
+    int score = 0;
+    std::vector<std::string> answers;
+};
+
+struct AnalysisResult {
+    std::vector<EnemyItem> enemyItems;
+    std::vector<EnemyPlayer> players;
+    std::vector<Suggestion> suggestions;
+    std::vector<Detection> detections;
+    double elapsedMs = 0.0;
+    std::string error;
+    std::string warning;        // the scan ran, but something it needs is missing
+    std::uint64_t version = 0;  // 0 = no scan has finished yet
+};

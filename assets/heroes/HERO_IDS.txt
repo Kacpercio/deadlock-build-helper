@@ -1,0 +1,46 @@
+Hero portrait template file name (without .png) -> hero
+
+abrams               Abrams
+apollo               Apollo
+baba                 Baba
+bebop                Bebop
+billy                Billy
+calico               Calico
+celeste              Celeste
+deadman_danny        Deadman Danny
+drifter              Drifter
+dynamo               Dynamo
+graves               Graves
+grey_talon           Grey Talon
+haze                 Haze
+holliday             Holliday
+infernus             Infernus
+ivy                  Ivy
+kelvin               Kelvin
+lady_geist           Lady Geist
+lash                 Lash
+mcginnis             McGinnis
+mina                 Mina
+mirage               Mirage
+mo_krill             Mo & Krill
+nurse_harrow         Nurse Harrow
+paige                Paige
+paradox              Paradox
+pocket               Pocket
+rat_king             Rat King
+rem                  Rem
+seven                Seven
+shiv                 Shiv
+silver               Silver
+sinclair             Sinclair
+solomon              Solomon
+the_doorman          The Doorman
+venator              Venator
+victor               Victor
+vindicta             Vindicta
+violet               Violet
+viscous              Viscous
+vyper                Vyper
+warden               Warden
+wraith               Wraith
+yamato               Yamato

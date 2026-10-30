@@ -1,0 +1,82 @@
+#pragma once
+
+#include "Config.h"
+#include "CounterDatabase.h"
+#include "HeroRecognizer.h"
+#include "ScreenCapture.h"
+#include "Types.h"
+#include "VisionEngine.h"
+
+#include <atomic>
+#include <condition_variable>
+#include <cstdint>
+#include <filesystem>
+#include <mutex>
+#include <optional>
+#include <stop_token>
+#include <string>
+#include <thread>
+#include <vector>
+
+// The configuration the worker is currently running with, handed to the main thread.
+struct ConfigSnapshot {
+    AppConfig config;
+    std::string summary;  // what the last load/reload did, for the console and the overlay
+    std::uint64_t version = 0;
+};
+
+// Runs capture -> template matching -> counter lookup on a background thread so the
+// overlay keeps rendering at full frame rate. It owns the templates and the counter table,
+// which lets it reload them between scans without any locking around the vision code.
+class AnalysisWorker {
+public:
+    // Loads templates and counters described by `cfg` before the thread starts.
+    AnalysisWorker(ScreenCapture& capture, AppConfig cfg, std::filesystem::path root);
+
+    // Queues one scan. Requests arriving while a scan runs are merged into the next one.
+    void requestScan(bool saveDebugImages);
+
+    // Re-reads config.json, counters.json and the template folder before the next scan.
+    void requestReload();
+
+    // Finds the icon scale that matches the open scoreboard, applies it and saves calibration.json.
+    void requestScaleTune();
+
+    bool busy() const { return busy_.load(); }
+
+    std::optional<AnalysisResult> takeIfNewer(std::uint64_t knownVersion);
+    std::optional<ConfigSnapshot> takeConfigIfNewer(std::uint64_t knownVersion);
+
+private:
+    void run(std::stop_token stop);
+    AnalysisResult analyze(bool saveDebugImages);
+    void reload();
+    void tuneScale();
+    std::string loadResources();
+    void publishConfig(std::string summary);
+    void saveDebugImages(cv::Mat& frame, const cv::Rect& searchArea, const std::vector<cv::Rect>& rows,
+                         const std::vector<cv::Rect>& portraits, const std::vector<Detection>& detections) const;
+
+    ScreenCapture& capture_;
+    const std::filesystem::path root_;
+    const int monitorIndex_;  // the capture cannot switch monitors at runtime
+
+    // Used only by the worker thread once it is running.
+    AppConfig cfg_;
+    VisionEngine vision_;    // item icons
+    HeroRecognizer heroes_;  // hero portraits
+    CounterDatabase counters_;
+
+    std::mutex mutex_;
+    std::condition_variable_any wake_;
+    bool pendingScan_ = false;
+    bool pendingDebug_ = false;
+    bool pendingReload_ = false;
+    bool pendingTune_ = false;
+    std::atomic<bool> busy_{false};
+    AnalysisResult latest_;
+    ConfigSnapshot publishedConfig_;
+
+    // Last member: started at the end of the constructor, stopped and joined before the rest is destroyed.
+    std::jthread thread_;
+};
