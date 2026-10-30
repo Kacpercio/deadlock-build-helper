@@ -5,6 +5,7 @@
 #include <imgui.h>
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -12,6 +13,8 @@
 struct PanelModel {
     std::string status;
     std::string you;         // about you, empty when no nickname has been picked
+    std::optional<EnemyPlayer> me;           // your hero and items, once found
+    std::vector<std::string> myWeakItems;    // items you own that do badly against these enemies
     std::vector<std::string> newPurchases;  // what enemies bought since your last look
     bool pinned = false;     // stays on screen after TAB is released
     bool perPlayer = false;  // more than one enemy column configured: list items per enemy

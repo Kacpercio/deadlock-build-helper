@@ -121,8 +121,7 @@ std::string aboutYou(const AnalysisResult& r)
     if (r.mySlot < 0) {
         return "You: not found on the scoreboard";
     }
-    return std::format("You: {}, {} items owned ({} souls)", r.myHero.empty() ? "hero not recognised" : r.myHero, r.myItems,
-                       r.mySouls);
+    return std::format("{} items, {} souls spent", r.me.itemIds.size(), r.mySouls);
 }
 
 std::string calibrationBanner(const Hotkeys& keys)
@@ -183,6 +182,7 @@ int main()
     bool menuOpen = false;
     bool reopenMenuValues = false;   // the settings were reset: show the new values once they arrive
     bool nicknameSet = false;
+    std::vector<std::pair<std::string, std::string>> itemNames;
     std::optional<int> pickedSlot;   // chosen in the menu since the last scan
     std::array<bool, 256> keyWasDown{};
     Clock::time_point menuOpenedAt{};
@@ -221,6 +221,7 @@ int main()
             banner = calibrationBanner(cfg.hotkeys);
             overlay.setIconFolders(resolvePath(root, cfg.templateDir), resolvePath(root, cfg.heroTemplateDir));
             nicknameSet = snapshot->nicknameSet;
+            itemNames = std::move(snapshot->itemNames);
             if (std::exchange(reopenMenuValues, false)) {
                 menu.open(cfg);
             }
@@ -352,6 +353,10 @@ int main()
         if (model.visible || model.calibrating) {
             model.panel.status = now < noticeUntil ? notice : statusLine(shown, worker.busy());
             model.panel.you = aboutYou(shown);
+            if (shown.mySlot >= 0) {
+                model.panel.me = shown.me;
+                model.panel.myWeakItems = shown.myWeakItems;
+            }
             model.panel.newPurchases = purchases;
             model.panel.pinned = pinned;
             model.panel.perPlayer = cfg.enemyRows.size() > 1;
@@ -385,7 +390,8 @@ int main()
             context.nicknameSet = nicknameSet;
             context.justPicked = pickedSlot.has_value();
             context.mySlot = pickedSlot.value_or(shown.mySlot);
-            context.myHero = shown.myHero;
+            context.myHero = shown.me.hero;
+            context.itemNames = &itemNames;
             context.notice = now < noticeUntil ? notice : std::string{};
             model.menu = [&menu, &menuActions, context] { menuActions = menu.draw(context); };
         }
@@ -401,6 +407,9 @@ int main()
         if (menuActions.pickMe) {
             worker.requestPickMe(*menuActions.pickMe);
             pickedSlot = *menuActions.pickMe;
+        }
+        if (menuActions.learnIcon) {
+            worker.requestLearnIcon(menuActions.learnIcon->first, menuActions.learnIcon->second);
         }
         if (menuActions.close) {
             closeMenu();

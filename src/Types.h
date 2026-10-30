@@ -68,9 +68,9 @@ struct AnalysisResult {
     // You, found by your nickname; only with a nickname picked in the menu.
     bool nicknameSet = false;
     int mySlot = -1;            // your column on your team, -1 = not found on the scoreboard
-    std::string myHero;         // display name, empty if not recognised
-    size_t myItems = 0;         // what you own is left out of the suggestions
-    int mySouls = 0;            // what those items cost
+    EnemyPlayer me;             // what is on that column; what you own is left out of the suggestions
+    int mySouls = 0;            // what your items cost
+    std::vector<std::string> myWeakItems;  // items you own that do badly against these enemies
 
     // Top of the frame this came from (holds the scoreboard), and the frame's full size.
     cv::Mat preview;

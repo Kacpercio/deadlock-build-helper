@@ -17,6 +17,7 @@
 #include <stop_token>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 // The configuration the worker is currently running with, handed to the main thread.
@@ -24,6 +25,7 @@ struct ConfigSnapshot {
     AppConfig config;
     std::string summary;  // what the last load/reload did, for the console and the overlay
     bool nicknameSet = false;
+    std::vector<std::pair<std::string, std::string>> itemNames;  // (display name, id), for the menu
     std::uint64_t version = 0;
 };
 
@@ -54,6 +56,10 @@ public:
     // Remembers the nickname in this column of your team on the last scan as yours. -1 forgets it.
     void requestPickMe(int allySlot);
 
+    // Saves this part of the last scan as the look of an item, for the icons the shop art does not
+    // match. `box` is in frame pixels.
+    void requestLearnIcon(std::string itemId, cv::Rect box);
+
     bool busy() const { return busy_.load(); }
 
     std::optional<AnalysisResult> takeIfNewer(std::uint64_t knownVersion);
@@ -68,6 +74,7 @@ private:
     void publishConfig(std::string summary);
     void applyThreadLimit() const;
     void pickMe(int allySlot);
+    void learnIcon(const std::string& itemId, cv::Rect box);
     void addMe(const cv::Mat& frame, AnalysisResult& result, SuggestInput& input);
     void saveDebugImages(cv::Mat& frame, const cv::Rect& searchArea, const std::vector<cv::Rect>& rows,
                          const std::vector<cv::Rect>& portraits, const std::vector<Detection>& detections) const;
@@ -95,6 +102,7 @@ private:
     std::optional<AppConfig> pendingSettings_;
     bool pendingResetSettings_ = false;
     std::optional<int> pendingPick_;
+    std::optional<std::pair<std::string, cv::Rect>> pendingLearn_;
     std::atomic<bool> busy_{false};
     AnalysisResult latest_;
     ConfigSnapshot publishedConfig_;

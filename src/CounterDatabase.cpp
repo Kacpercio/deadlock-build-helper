@@ -102,6 +102,16 @@ std::string CounterDatabase::displayName(const std::string& itemId) const
     return nameIn(items_, itemId);
 }
 
+std::vector<std::pair<std::string, std::string>> CounterDatabase::itemNames() const
+{
+    std::vector<std::pair<std::string, std::string>> names;
+    for (const auto& [id, entry] : items_) {
+        names.emplace_back(entry.display, id);
+    }
+    std::ranges::sort(names);
+    return names;
+}
+
 std::set<std::string> CounterDatabase::heroIds() const
 {
     std::set<std::string> ids;
@@ -157,9 +167,15 @@ std::vector<Suggestion> CounterDatabase::suggest(const SuggestInput& input, size
                 continue;
             }
             const Entry& entry = it->second;
+            // Something you own answers this already, so buying a second answer matters less.
+            const bool covered = std::ranges::any_of(entry.counters, [&](const Counter& c) {
+                const auto owned = itemIdByName_.find(c.item);
+                return owned != itemIdByName_.end() && input.owned.contains(owned->second);
+            });
             for (const auto& counter : entry.counters) {
                 Suggestion& s = byItem[counter.item];
-                const int points = count * entry.weight * counter.priority;
+                const int full = count * entry.weight * counter.priority;
+                const int points = covered ? (full + 1) / 2 : full;
                 // Show the reason of whatever contributes most to this suggestion.
                 if (int& best = strongest[counter.item]; points > best) {
                     best = points;

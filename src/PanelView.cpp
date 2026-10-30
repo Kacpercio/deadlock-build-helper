@@ -337,6 +337,15 @@ void layout(Canvas& c, const PanelModel& model, const PanelIcons& icons, const D
     }
     c.advance(c.px(8.0f));
 
+    if (model.me) {
+        c.heading("YOU");
+        drawPlayer(c, *model.me, icons, detail);
+        for (const auto& line : model.myWeakItems) {
+            c.advance(c.longText(ImVec2(c.left(), c.y()), kAvoid, line, inner, detail));
+        }
+        c.advance(c.px(6.0f));
+    }
+
     if (!model.newPurchases.empty()) {
         c.heading("NEW SINCE LAST LOOK");
         for (const auto& line : model.newPurchases) {

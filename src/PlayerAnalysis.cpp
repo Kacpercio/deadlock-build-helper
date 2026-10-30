@@ -164,6 +164,21 @@ std::vector<HeroVerdict> addHeroes(const HeroRecognizer& heroes, const cv::Mat& 
     return verdicts;
 }
 
+std::vector<std::string> weakItems(const EnemyPlayer& me, const std::vector<EnemyPlayer>& enemies)
+{
+    std::vector<std::string> lines;
+    for (const auto& enemy : enemies) {
+        for (const auto& avoid : enemy.avoid) {  // "Fury Trance (-4.5 pp)"
+            for (const auto& item : me.items) {
+                if (avoid.starts_with(item + " (")) {
+                    lines.push_back(item + " is weak against " + enemy.hero + " " + avoid.substr(item.size() + 1));
+                }
+            }
+        }
+    }
+    return lines;
+}
+
 std::vector<std::string> newPurchases(const std::vector<EnemyPlayer>& before, const std::vector<EnemyPlayer>& after)
 {
     std::vector<std::string> lines;

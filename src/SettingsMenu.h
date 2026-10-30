@@ -8,6 +8,8 @@
 
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 // What the menu shows about the current state.
 struct MenuContext {
@@ -17,6 +19,7 @@ struct MenuContext {
     bool nicknameSet = false;
     int mySlot = -1;                      // your column on the last scan
     std::string myHero;
+    const std::vector<std::pair<std::string, std::string>>* itemNames = nullptr;  // (display name, id)
     bool justPicked = false;              // a nickname was picked after the last scan
     std::string notice;                   // what the last change did
 };
@@ -27,6 +30,7 @@ struct MenuActions {
     bool apply = false;          // settings() changed for good: save and use them
     bool reset = false;          // back to config.json
     std::optional<int> pickMe;   // this column of your team shows your nickname; -1 forgets it
+    std::optional<std::pair<std::string, cv::Rect>> learnIcon;  // this part of the frame looks like this item id
 };
 
 // The in-game settings window. It edits its own copy of the settings and shows changes right away;
@@ -44,6 +48,7 @@ public:
 
 private:
     void drawScoreboard(const MenuContext& context, MenuActions& actions);
+    void drawIconTeacher(const MenuContext& context, MenuActions& actions);
     void drawPositions(MenuActions& actions);
     void drawRecognition(MenuActions& actions);
     void drawHotkeys();
@@ -51,6 +56,12 @@ private:
 
     AppConfig edited_;
     int* waitingForKey_ = nullptr;
+
+    // The icon being taught.
+    bool teachEnemySide_ = true;
+    bool iconPicked_ = false;
+    cv::Point iconCentre_;           // frame pixels
+    char iconFilter_[64] = "";
 };
 
 // Colours for the menu's widgets. Call once, after creating the ImGui context.

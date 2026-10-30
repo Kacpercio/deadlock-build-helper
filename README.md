@@ -207,10 +207,17 @@ survive rebuilds. **Reset to defaults** deletes that file.
 
 **You.** Hold TAB once, open the menu and click your nickname among the green boxes. The helper saves a
 picture of it (`assets\my_name.png`) and from then on finds you by that picture, in whichever column and
-on whichever hero: the panel shows your hero, and what you already own is left out of the suggestions.
+on whichever hero. The panel then shows your hero and items, warns about items of yours that do badly
+against these enemies, leaves what you own out of the suggestions, and ranks answers to a threat lower
+when you already own one.
 Pick it again if you change your nickname or resolution. It does not read text, so nothing is typed: a
 typed nickname would need OCR. On two real frames the nickname scored 0.998 or more, and other text at
 most 0.46.
+
+**Teaching icons.** Active items look different on the scoreboard and cannot be downloaded (their API art
+scored 0.45 on a real icon, below other items). Under "Teach an icon", click one on the enlarged strips and
+pick its name; it is saved as `assets\templates\<id>@active.png` and recognised from then on. Copy these
+into the project's `assets\templates` if you want them to survive deleting `build`.
 
 ## When to buy
 
@@ -279,7 +286,7 @@ cmake --build --preset release
 ctest --test-dir build --output-on-failure
 ```
 
-- `logic_tests` (169 checks): config parsing, the measured column layout, value clamping, key
+- `logic_tests` (174 checks): config parsing, the measured column layout, value clamping, key
   names, `calibration.json`, the counter database (items, heroes, builds, tips, overrides such
   as "no spirit resist vs Tankbuster"), ranking, and the per-enemy hero / item / build analysis.
 - `vision_tests` (275 checks): Unicode-safe image IO, hero template loading, then synthetic

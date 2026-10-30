@@ -277,6 +277,16 @@ int main(int, char** argv)
         CHECK(db.costOf("glass_cannon") == 6400);
         CHECK(db.costOf("nonsense") == 0);
 
+        // A threat you already answer counts for less: the other answers drop.
+        SuggestInput threat;
+        threat.items = {{"glass_cannon", 1}};
+        const auto uncovered = db.suggest(threat, 8);
+        CHECK(uncovered.size() >= 2);
+        threat.owned = {uncovered[0].itemId};
+        const auto covered = db.suggest(threat, 8);
+        CHECK(!covered.empty() && covered[0].score < uncovered[1].score + 1);
+        CHECK(covered[0].score == (uncovered[1].score + 1) / 2);
+
         // Building on an item you own costs less, and says so.
         CounterDatabase small;
         CHECK(small.load(writeTemp("dbh_components.json", R"({"items": {
@@ -296,6 +306,14 @@ int main(int, char** argv)
 
     // ---- What enemies bought since the last look ----------------------------------------------
     {
+        EnemyPlayer mine;
+        mine.items = {"Fury Trance", "Metal Skin"};
+        EnemyPlayer haze;
+        haze.hero = "Haze";
+        haze.avoid = {"Fury Trance (-4.5 pp)", "Active Reload (-2.2 pp)"};
+        CHECK(weakItems(mine, {haze}) == std::vector<std::string>{"Fury Trance is weak against Haze (-4.5 pp)"});
+        CHECK(weakItems(EnemyPlayer{}, {haze}).empty());
+
         EnemyPlayer a;
         a.slot = 0; a.heroId = "haze"; a.hero = "Haze"; a.itemIds = {"x"}; a.items = {"X"};
         EnemyPlayer later = a;

@@ -75,6 +75,15 @@ void AnalysisWorker::requestResetSettings()
     wake_.notify_one();
 }
 
+void AnalysisWorker::requestLearnIcon(std::string itemId, cv::Rect box)
+{
+    {
+        std::lock_guard lock(mutex_);
+        pendingLearn_ = std::pair(std::move(itemId), box);
+    }
+    wake_.notify_one();
+}
+
 void AnalysisWorker::requestPickMe(int allySlot)
 {
     {
@@ -140,11 +149,12 @@ void AnalysisWorker::run(std::stop_token stop)
         bool resetSettingsFile = false;
         std::optional<AppConfig> settings;
         std::optional<int> pick;
+        std::optional<std::pair<std::string, cv::Rect>> learn;
         {
             std::unique_lock lock(mutex_);
             const auto pending = [this] {
                 return pendingScan_ || pendingReload_ || pendingTune_ || pendingPrepare_ || pendingSettings_ ||
-                       pendingResetSettings_ || pendingPick_;
+                       pendingResetSettings_ || pendingPick_ || pendingLearn_;
             };
             if (!wake_.wait_for(lock, stop, kKeepCaptureOpen, pending)) {
                 if (stop.stop_requested()) {
@@ -164,6 +174,7 @@ void AnalysisWorker::run(std::stop_token stop)
             resetSettingsFile = std::exchange(pendingResetSettings_, false);
             settings = std::exchange(pendingSettings_, std::nullopt);
             pick = std::exchange(pendingPick_, std::nullopt);
+            learn = std::exchange(pendingLearn_, std::nullopt);
         }
 
         if (prepare) {
@@ -178,6 +189,9 @@ void AnalysisWorker::run(std::stop_token stop)
         }
         if (pick) {
             pickMe(*pick);
+        }
+        if (learn) {
+            learnIcon(learn->first, learn->second);
         }
 
         if (reloadFirst) {
@@ -300,6 +314,22 @@ void AnalysisWorker::pickMe(int allySlot)
     publishConfig("nickname saved");
 }
 
+void AnalysisWorker::learnIcon(const std::string& itemId, cv::Rect box)
+{
+    box &= cv::Rect(0, 0, lastPreview_.cols, lastPreview_.rows);
+    if (box.empty()) {
+        publishConfig("nothing to learn that icon from: hold TAB in a match first");
+        return;
+    }
+    const fs::path folder = resolvePath(root_, cfg_.templateDir);
+    if (!writeImage(folder / (itemId + "@active.png"), lastPreview_(box))) {
+        publishConfig("could not save that icon");
+        return;
+    }
+    vision_.loadTemplates(folder);
+    publishConfig("learned " + counters_.displayName(itemId));
+}
+
 void AnalysisWorker::addMe(const cv::Mat& frame, AnalysisResult& result, SuggestInput& input)
 {
     result.nicknameSet = !myName_.empty();
@@ -319,17 +349,23 @@ void AnalysisWorker::addMe(const cv::Mat& frame, AnalysisResult& result, Suggest
         return;
     }
     std::vector<Detection> mine = vision_.scan(frame, {columns[slot]});
-    for (const auto& d : mine) {
+    for (auto& d : mine) {
+        d.slot = 0;
         input.owned.insert(d.itemId);
-    }
-    result.myItems = mine.size();
-    for (const auto& d : mine) {
         result.mySouls += counters_.costOf(d.itemId);
     }
     if (slot < portraits.size()) {
         if (const HeroVerdict v = heroes_.recognize(frame, portraits[slot]); v.accepted) {
-            result.myHero = counters_.heroName(v.id);
+            mine.push_back({v.id, v.box, v.score, 0, true});
         }
+    }
+    SuggestInput notForSuggestions;
+    const std::vector<EnemyPlayer> described =
+        describePlayers(mine, 1, counters_, {cfg_.archetypeShare, cfg_.archetypeMinItems}, notForSuggestions);
+    if (!described.empty()) {
+        result.me = described.front();
+        result.me.tips.clear();  // how to play against your own items is no use to you
+        result.me.avoid.clear();
     }
 }
 
@@ -339,6 +375,7 @@ void AnalysisWorker::publishConfig(std::string summary)
     publishedConfig_.config = cfg_;
     publishedConfig_.summary = std::move(summary);
     publishedConfig_.nicknameSet = !myName_.empty();
+    publishedConfig_.itemNames = counters_.itemNames();
     ++publishedConfig_.version;
 }
 
@@ -379,6 +416,8 @@ AnalysisResult AnalysisWorker::analyze(bool debug)
         result.enemyItems.push_back({id, counters_.displayName(id), n});
     }
     std::ranges::stable_sort(result.enemyItems, std::greater{}, &EnemyItem::count);
+    result.myWeakItems = weakItems(result.me, result.players);
+
     // How far along you are: your own items, or if unknown what the average enemy owns.
     input.spentSouls = result.mySlot >= 0 ? result.mySouls : 0;
     if (result.mySlot < 0 && !result.players.empty()) {

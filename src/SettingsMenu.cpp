@@ -1,6 +1,7 @@
 #include "SettingsMenu.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <format>
 
@@ -15,6 +16,7 @@ constexpr ImU32 kYouFill = IM_COL32(255, 110, 255, 70);
 
 constexpr int kReferenceHeight = 1080;  // sizes in this menu are pixels on a 1080p screen
 constexpr int kVK_ESCAPE = 0x1B;
+constexpr float kItemIconPixels = 27.0f;  // an item icon on a 1080p scoreboard
 
 void heading(const char* title)
 {
@@ -137,6 +139,7 @@ MenuActions SettingsMenu::draw(const MenuContext& context)
             ImGui::TextDisabled("%s", context.notice.c_str());
         }
         drawScoreboard(context, actions);
+        drawIconTeacher(context, actions);
         drawPositions(actions);
         drawRecognition(actions);
         drawHotkeys();
@@ -224,6 +227,88 @@ void SettingsMenu::drawScoreboard(const MenuContext& context, MenuActions& actio
     }
     ImGui::SetCursorScreenPos(afterImage);
     ImGui::Dummy(ImVec2(0.0f, 0.0f));
+}
+
+void SettingsMenu::drawIconTeacher(const MenuContext& context, MenuActions& actions)
+{
+    heading("Teach an icon");
+    ImGui::TextWrapped("Active items look different on the scoreboard, so they have to be taught once. "
+                       "Click an icon that has no name in the panel, then pick its name.");
+    if (!context.preview || edited_.enemyRows.empty() || !context.itemNames) {
+        return;
+    }
+    if (ImGui::RadioButton("Enemy side", teachEnemySide_)) {
+        teachEnemySide_ = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Your side", !teachEnemySide_)) {
+        teachEnemySide_ = false;
+    }
+
+    // All the item strips of one side, enlarged.
+    const NormRect& first = edited_.enemyRows.front();
+    const NormRect& last = edited_.enemyRows.back();
+    NormRect strip{first.x, first.y, last.x + last.w - first.x, first.h};
+    if (!teachEnemySide_) {
+        strip.x = 1.0 - strip.x - strip.w;
+    }
+    const float fw = static_cast<float>(context.frameSize.width);
+    const float fh = static_cast<float>(context.frameSize.height);
+    const float width = ImGui::GetContentRegionAvail().x;
+    const float zoom = width / (static_cast<float>(strip.w) * fw);
+    const ImVec2 size(width, static_cast<float>(strip.h) * fh * zoom);
+    const ImVec2 uv0(static_cast<float>(strip.x), static_cast<float>(strip.y) * fh / static_cast<float>(context.previewSize.height));
+    const ImVec2 uv1(static_cast<float>(strip.x + strip.w),
+                     static_cast<float>(strip.y + strip.h) * fh / static_cast<float>(context.previewSize.height));
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    ImGui::Image(context.preview, size, uv0, uv1);
+
+    const float iconPixels = kItemIconPixels * fh / kReferenceHeight;
+    if (ImGui::IsItemClicked()) {
+        const ImVec2 mouse = ImGui::GetMousePos();
+        iconCentre_ = cv::Point(static_cast<int>(static_cast<float>(strip.x) * fw + (mouse.x - origin.x) / zoom),
+                                static_cast<int>(static_cast<float>(strip.y) * fh + (mouse.y - origin.y) / zoom));
+        iconPicked_ = true;
+        iconFilter_[0] = '\0';
+        ImGui::OpenPopup("##pick_item");
+    }
+    if (!iconPicked_) {
+        return;
+    }
+
+    // Where the picture will be cut, and what it will be called.
+    const ImVec2 at(origin.x + (static_cast<float>(iconCentre_.x) - static_cast<float>(strip.x) * fw - iconPixels * 0.5f) * zoom,
+                    origin.y + (static_cast<float>(iconCentre_.y) - static_cast<float>(strip.y) * fh - iconPixels * 0.5f) * zoom);
+    ImGui::GetWindowDrawList()->AddRect(at, ImVec2(at.x + iconPixels * zoom, at.y + iconPixels * zoom), kYouBox, 0.0f, 0, 2.0f);
+
+    if (ImGui::BeginPopup("##pick_item")) {
+        ImGui::TextUnformatted("Which item is in the pink box? Type to filter.");
+        if (ImGui::IsWindowAppearing()) {
+            ImGui::SetKeyboardFocusHere();
+        }
+        ImGui::InputText("##filter", iconFilter_, sizeof(iconFilter_));
+        std::string filter(iconFilter_);
+        std::ranges::transform(filter, filter.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+
+        if (ImGui::BeginChild("##names", ImVec2(ImGui::GetFontSize() * 20.0f, ImGui::GetTextLineHeightWithSpacing() * 10.0f),
+                              ImGuiChildFlags_Borders)) {
+            for (const auto& [name, id] : *context.itemNames) {
+                std::string lower = name;
+                std::ranges::transform(lower, lower.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+                if (!filter.empty() && lower.find(filter) == std::string::npos) {
+                    continue;
+                }
+                if (ImGui::Selectable(name.c_str())) {
+                    const int s = static_cast<int>(std::lround(iconPixels));
+                    actions.learnIcon = std::pair(id, cv::Rect(iconCentre_.x - s / 2, iconCentre_.y - s / 2, s, s));
+                    iconPicked_ = false;
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+        }
+        ImGui::EndChild();
+        ImGui::EndPopup();
+    }
 }
 
 void SettingsMenu::drawPositions(MenuActions& actions)

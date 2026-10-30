@@ -56,6 +56,9 @@ int findName(const cv::Mat& frameBgr, const std::vector<cv::Rect>& boxes, const 
 // Skin". Only compares the same hero in the same column.
 std::vector<std::string> newPurchases(const std::vector<EnemyPlayer>& before, const std::vector<EnemyPlayer>& after);
 
+// One line per item of yours that does badly against an enemy's hero.
+std::vector<std::string> weakItems(const EnemyPlayer& me, const std::vector<EnemyPlayer>& enemies);
+
 // Turns one scan's detections (items and hero portraits, each with its row in `slot`) into one
 // EnemyPlayer per row that showed anything, and fills `input` for CounterDatabase::suggest.
 std::vector<EnemyPlayer> describePlayers(const std::vector<Detection>& detections, size_t rowCount,

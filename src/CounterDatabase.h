@@ -7,6 +7,7 @@
 #include <set>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 // What one scan saw, as input for the suggestion ranking.
@@ -27,6 +28,7 @@ public:
     size_t size() const { return items_.size(); }
     size_t heroCount() const { return heroes_.size(); }
     std::set<std::string> heroIds() const;
+    std::vector<std::pair<std::string, std::string>> itemNames() const;  // (display name, id), sorted by name
 
     // Human-readable names; the id itself when counters.json does not know it.
     std::string displayName(const std::string& itemId) const;
