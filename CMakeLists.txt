@@ -59,12 +59,14 @@ target_link_libraries(DeadlockBuildHelper PRIVATE
     dwmapi
 )
 
-# Ship config, counters and template icons next to the .exe.
-add_custom_command(TARGET DeadlockBuildHelper POST_BUILD
+# Ship config, counters and template icons next to the .exe. On every build, not only after linking:
+# icons downloaded later have to get there too.
+add_custom_target(copy_assets ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             ${CMAKE_SOURCE_DIR}/assets
             $<TARGET_FILE_DIR:DeadlockBuildHelper>/assets
 )
+add_dependencies(copy_assets DeadlockBuildHelper)
 
 # Logic + vision tests (synthetic scoreboards, no game needed):
 #   cmake --preset default -DDBH_BUILD_TESTS=ON && cmake --build --preset release && ctest --test-dir build

@@ -280,17 +280,17 @@ void AnalysisWorker::tuneScale()
                               t.meanScore, saved ? ", saved to calibration.json" : ", could not save calibration.json"));
 }
 
-void AnalysisWorker::loadItemTemplates(VisionEngine& vision) const
+size_t AnalysisWorker::loadItemTemplates(VisionEngine& vision) const
 {
     const fs::path folder = resolvePath(root_, cfg_.templateDir);
     vision.loadTemplates(folder);
-    vision.addActiveItems(folder.parent_path() / "icons");
+    return vision.addActiveItems(folder.parent_path() / "icons");
 }
 
 std::string AnalysisWorker::loadResources()
 {
     VisionEngine vision(itemVisionConfig(cfg_));
-    loadItemTemplates(vision);
+    activeTemplates_ = loadItemTemplates(vision);
     const size_t templates = vision.templateCount();
     vision_ = std::move(vision);
 
@@ -308,8 +308,8 @@ std::string AnalysisWorker::loadResources()
     abilityBar_.load(root_ / "assets" / "abilities", counters_.heroIds());
     myName_ = loadNameTemplate(root_ / "assets" / "my_name.png");
 
-    return std::format("{} item / {} hero templates, {} items + {} heroes in counters{}, {} enemy rows",
-                       templates, heroTemplates, counters_.size(), counters_.heroCount(),
+    return std::format("{} item templates ({} active) / {} hero templates, {} items + {} heroes in counters{}, {} enemy rows",
+                       templates, activeTemplates_, heroTemplates, counters_.size(), counters_.heroCount(),
                        countersLoaded ? "" : " (counters.json not loaded)", cfg_.enemyRows.size());
 }
 
@@ -367,26 +367,38 @@ void AnalysisWorker::addMe(const cv::Mat& frame, AnalysisResult& result, Suggest
 {
     result.nicknameSet = !myName_.empty();
 
-    // You said who you are, so the nickname comes first. Without it the HUD tells which hero you play.
+    // Two independent answers: the column with your nickname, and the column showing the art of the hero
+    // your HUD says you play.
     double nameScore = 0.0;
     const int byName = myName_.empty() ? -1 : findName(frame, toPixels(cfg_.allyNames, frame.size()), myName_, &nameScore);
     const HeroVerdict look = abilityBar_.recognize(frame, lastMyHero_);
+    int byArt = -1;
+    double artScore = 0.0;
     if (look.accepted) {
         result.myHeroId = look.id;
+        const auto shown = std::ranges::find(result.allies, look.id, &EnemyPlayer::heroId);
+        byArt = shown != result.allies.end()
+                    ? shown->slot
+                    : heroes_.findHero(frame, toPixels(mirrored(cfg_.enemyPortraits), frame.size()), look.id, &artScore);
     }
-    const auto byHero = look.accepted ? std::ranges::find(result.allies, look.id, &EnemyPlayer::heroId) : result.allies.end();
 
+    // When they disagree the nickname wins: you picked it yourself, and can pick again if it is wrong.
     if (byName >= 0) {
         result.mySlot = byName;
-    } else if (byHero != result.allies.end()) {
-        result.mySlot = byHero->slot;
+    } else if (byArt >= 0) {
+        result.mySlot = byArt;
     } else if (const auto last = std::ranges::find(result.allies, lastMySlot_, &EnemyPlayer::slot);
                last != result.allies.end() && !last->heroId.empty() && last->heroId == lastMyHero_) {
         result.mySlot = lastMySlot_;
     }
-    result.howFound = std::format("nickname: {} | abilities: {} {:.2f}", byName >= 0 ? std::format("column {} ({:.2f})", byName + 1, nameScore)
-                                                                                     : std::string(myName_.empty() ? "not picked" : "not found"),
-                                  look.id.empty() ? "?" : look.id, look.score);
+
+    const std::string nameSays = byName >= 0 ? std::format("column {} ({:.2f})", byName + 1, nameScore)
+                                             : std::string(myName_.empty() ? "not picked" : "not found");
+    const std::string artSays = !look.accepted   ? std::format("HUD unclear ({:.2f})", look.score)
+                                : byArt >= 0     ? std::format("{} in column {}", counters_.heroName(look.id), byArt + 1)
+                                                 : std::format("{}, not in any column ({:.2f})", counters_.heroName(look.id), artScore);
+    const char* verdict = byName >= 0 && byArt >= 0 ? (byName == byArt ? " | both agree" : " | THEY DISAGREE: click your nickname again") : "";
+    result.howFound = std::format("nickname: {} | hero art: {}{}", nameSays, artSays, verdict);
     if (result.mySlot < 0) {
         return;
     }
@@ -396,11 +408,16 @@ void AnalysisWorker::addMe(const cv::Mat& frame, AnalysisResult& result, Suggest
     if (me == result.allies.end()) {
         result.me = {};
         result.me.slot = result.mySlot;
-        return;
+    } else {
+        result.me = *me;
+    }
+    // A portrait the art search alone could not name is named by the HUD, unless the HUD's hero is elsewhere.
+    if (result.me.heroId.empty() && look.accepted && (byArt < 0 || byArt == result.mySlot)) {
+        result.me.heroId = look.id;
+        result.me.hero = counters_.heroName(look.id);
     }
     lastMySlot_ = result.mySlot;
-    lastMyHero_ = me->heroId;
-    result.me = *me;
+    lastMyHero_ = result.me.heroId;
     result.me.tips.clear();  // how to play against your own items is no use to you
     result.me.avoid.clear();
     for (const auto& id : result.me.itemIds) {
@@ -469,6 +486,8 @@ AnalysisResult AnalysisWorker::analyze(bool debug)
 
     if (vision_.templateCount() == 0) {
         result.warning = "no item icons: run tools/fetch_icons.py";
+    } else if (activeTemplates_ == 0) {
+        result.warning = "no active item icons: run tools/fetch_icons.py and build again";
     } else if ((heroes_.heroCount() == 0 && !portraits.empty()) || abilityBar_.heroCount() == 0) {
         result.warning = "no hero art: run tools/fetch_heroes.py";
     }
@@ -514,6 +533,7 @@ AnalysisResult AnalysisWorker::analyze(bool debug)
         const int nameSlot = findName(*frame, toPixels(cfg_.allyNames, frame->size()), myName_, &nameScore);
         std::cout << std::format("[debug] you, by your nickname: column {}, score {:.3f}; in use: column {}\n", nameSlot,
                                  nameScore, result.mySlot);
+        std::cout << std::format("[debug] your items: {} recognised, {} not\n", result.me.itemIds.size(), result.me.unknownItems);
         for (size_t i = 0; i < verdicts.size(); ++i) {
             const HeroVerdict& v = verdicts[i];
             std::cout << std::format("[debug] {} #{}: {} {:.3f}, next {:.3f}: {}\n", i < rows.size() ? "enemy" : "ally",

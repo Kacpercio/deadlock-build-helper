@@ -30,6 +30,10 @@ constexpr double kMinOpaque = 0.25;  // a variant showing less of the hero than 
 constexpr double kMinTexture = 6.0;  // summed BGR standard deviation below which a picture is flat
 constexpr size_t kFinalists = 3;     // heroes that reach the colour pass
 
+// findHero(): the column showing the hero against all the others of a team.
+constexpr double kFindMinScore = 0.65;
+constexpr double kFindMinLead = 0.15;
+
 }  // namespace
 
 HeroRecognizer::HeroRecognizer(HeroConfig cfg)
@@ -162,6 +166,38 @@ HeroVerdict HeroRecognizer::confirm(const cv::Mat& frameBgr, cv::Rect box, const
     bestOf(*hero, first, last, search, verdict.score, verdict.box, variant);
     verdict.accepted = verdict.score >= cfg_.threshold;
     return verdict;
+}
+
+int HeroRecognizer::findHero(const cv::Mat& frameBgr, const std::vector<cv::Rect>& boxes, const std::string& id, double* score) const
+{
+    const auto hero = std::ranges::find(heroes_, id, &Hero::id);
+    if (hero == heroes_.end() || hero->variants.empty()) {
+        return -1;
+    }
+    int found = -1;
+    double best = -1.0;
+    double next = -1.0;
+    for (size_t i = 0; i < boxes.size(); ++i) {
+        const Search search = prepareSearch(frameBgr, boxes[i]);
+        if (search.image.empty()) {
+            continue;
+        }
+        double s = -1.0;
+        cv::Rect box;
+        size_t variant = 0;
+        bestOf(*hero, 0, hero->variants.size() - 1, search, s, box, variant);
+        if (s > best) {
+            next = best;
+            best = s;
+            found = static_cast<int>(i);
+        } else if (s > next) {
+            next = s;
+        }
+    }
+    if (score) {
+        *score = best;
+    }
+    return best >= kFindMinScore && best - next >= kFindMinLead ? found : -1;
 }
 
 HeroVerdict HeroRecognizer::recognize(const cv::Mat& frameBgr, cv::Rect box) const

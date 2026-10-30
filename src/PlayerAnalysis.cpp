@@ -93,6 +93,7 @@ std::vector<Detection> scanBoard(const cv::Mat& frameBgr, VisionEngine& vision, 
     const std::vector<cv::Rect> rows = toPixels(rowBoxes, frameBgr.size());
     std::vector<Detection> detections = vision.scan(frameBgr, rows);
     assignToRows(detections, rows);
+    vision.fillGaps(frameBgr, rows, detections);
     std::vector<HeroVerdict> looks =
         addHeroes(heroes, frameBgr, toPixels(portraitBoxes, frameBgr.size()), rows.size(), detections, expectedHeroes);
     if (verdicts) {
@@ -142,7 +143,7 @@ std::vector<Detection> ScoreboardMemory::update(const std::vector<Detection>& sc
         }
     }
     for (const auto& d : scan) {
-        if (!d.isHero) {
+        if (!d.isHero && d.itemId != kUnknownItem) {
             columns_[d.slot].items[d.itemId] = {d, 0};
         }
     }
@@ -155,6 +156,14 @@ std::vector<Detection> ScoreboardMemory::update(const std::vector<Detection>& sc
         }
         for (const auto& [id, item] : column.items) {
             known.push_back(item.detection);
+        }
+    }
+    // A place nothing could be matched to counts for this look only, and not if an earlier look did better.
+    for (const auto& d : scan) {
+        if (d.itemId == kUnknownItem && std::ranges::none_of(known, [&](const Detection& k) {
+                return k.slot == d.slot && !k.isHero && (k.box & d.box).area() * 2 > d.box.area();
+            })) {
+            known.push_back(d);
         }
     }
     return known;
@@ -314,6 +323,10 @@ std::vector<EnemyPlayer> describePlayers(const std::vector<Detection>& detection
         if (d.isHero) {
             p.heroId = d.itemId;
             p.hero = counters.heroName(d.itemId);
+            continue;
+        }
+        if (d.itemId == kUnknownItem) {
+            ++p.unknownItems;
             continue;
         }
         ++input.items[d.itemId];

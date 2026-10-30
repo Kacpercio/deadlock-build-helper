@@ -6,6 +6,9 @@
 #include <string>
 #include <vector>
 
+// Detection::itemId of a place on the scoreboard that must hold an item nothing could be matched to.
+inline constexpr const char* kUnknownItem = "?";
+
 // One icon found on screen. `box` is in full-frame (= monitor) pixel coordinates.
 struct Detection {
     std::string itemId;  // item id, or hero id for portrait detections
@@ -33,6 +36,7 @@ struct EnemyPlayer {
     int vitalityItems = 0;
     std::vector<std::string> itemIds;
     std::vector<std::string> items;  // display names, same order as itemIds
+    int unknownItems = 0;            // items seen on the scoreboard but not recognised
     std::vector<std::string> tips;   // how to play against their items
     std::vector<std::string> avoid;  // items that do badly against their hero
 };

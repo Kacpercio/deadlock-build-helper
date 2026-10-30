@@ -21,6 +21,8 @@
 #include <random>
 #include <set>
 #include <string>
+#include <tuple>
+#include <utility>
 #include <vector>
 #include <cstdlib>
 
@@ -581,6 +583,145 @@ int main(int, char** argv)
         // Within about one template pixel (~4% at 27 px): finer differences round to the same size.
         CHECK(std::abs(tuned.tunedScale - actual) <= 0.04);
         verify(tuned);
+    }
+
+    // ---- Items fill two places per line in buying order, so a gap before the last hit is an item ----
+    {
+        const fs::path folder = tmp / "gap_test";
+        fs::create_directories(folder);
+        std::vector<std::string> ids;
+        std::map<std::string, cv::Mat> art;
+        for (int i = 0; i < 8; ++i) {
+            const std::string id = std::format("item{}", i);
+            ids.push_back(id);
+            art[id] = makeIcon(rng, categoryColor("spirit"));
+            cv::imwrite((folder / (id + ".png")).string(), art[id]);
+        }
+        const cv::Size size(1920, 1080);
+        const std::vector<cv::Rect> rows = toPixels(cfg.enemyRows, size);
+        const auto place = [&](int n, cv::Point shift = {}) {
+            return rows[2].tl() + cv::Point(kOffsetX + (n % 2) * kPitch, kOffsetY + (n / 2) * kPitch) + shift;
+        };
+        const auto draw = [&](cv::Mat& frame, const cv::Mat& icon, cv::Point at) {
+            cv::Mat soft;
+            cv::GaussianBlur(icon, soft, {0, 0}, kBlur);
+            soft.copyTo(frame(cv::Rect(at, icon.size())));
+        };
+        const auto damaged = [&](const cv::Mat& icon, double noiseShare = 0.45) {
+            cv::Mat noise(icon.size(), CV_8UC3), out;
+            cv::randu(noise, cv::Scalar::all(0), cv::Scalar::all(255));
+            cv::addWeighted(icon, 1.0 - noiseShare, noise, noiseShare, 0.0, out);
+            return out;
+        };
+        const auto read = [&](const cv::Mat& frame) {
+            VisionConfig vc = itemVisionConfig(cfg);
+            VisionEngine engine(vc);
+            engine.loadTemplates(folder);
+            std::vector<Detection> hits = engine.scan(frame, rows);
+            assignToRows(hits, rows);
+            engine.fillGaps(frame, rows, hits);
+            std::map<std::string, Detection> byId;
+            int unknown = 0;
+            for (const auto& d : hits) {
+                CHECK(d.slot == 2);
+                if (d.itemId == kUnknownItem) {
+                    ++unknown;
+                } else {
+                    byId[d.itemId] = d;
+                }
+            }
+            return std::pair(byId, unknown);
+        };
+        const cv::Mat blank(size, CV_8UC3, cv::Scalar(28, 26, 30));
+
+        // Too damaged for the first search, not for a place that must hold an item.
+        cv::Mat frame = blank.clone();
+        for (int n = 0; n < 5; ++n) {
+            draw(frame, n == 2 ? damaged(art[ids[n]]) : art[ids[n]], place(n));
+        }
+        VisionEngine plain(itemVisionConfig(cfg));
+        plain.loadTemplates(folder);
+        CHECK(plain.scan(frame, rows).size() == 4);
+        auto [items, unknown] = read(frame);
+        CHECK(items.size() == 5 && items.contains(ids[2]) && unknown == 0);
+
+        // Something no template fits: counted, not lost.
+        frame = blank.clone();
+        for (int n = 0; n < 5; ++n) {
+            draw(frame, n == 2 ? makeIcon(rng, categoryColor("weapon")) : art[ids[n]], place(n));
+        }
+        std::tie(items, unknown) = read(frame);
+        CHECK(items.size() == 4 && unknown == 1);
+
+        // After the last hit, what is slightly damaged counts, and what fits nothing does not.
+        frame = blank.clone();
+        for (int n = 0; n < 4; ++n) {
+            draw(frame, art[ids[n]], place(n));
+        }
+        draw(frame, damaged(art[ids[4]], 0.33), place(4));
+        draw(frame, makeIcon(rng, categoryColor("weapon")), place(5));
+        std::tie(items, unknown) = read(frame);
+        CHECK(items.size() == 5 && items.contains(ids[4]) && unknown == 0);
+
+        // Nothing at all, and a lone stray hit far down the column.
+        std::tie(items, unknown) = read(blank);
+        CHECK(items.empty() && unknown == 0);
+        frame = blank.clone();
+        draw(frame, art[ids[0]], place(8));
+        std::tie(items, unknown) = read(frame);
+        CHECK(items.size() == 1 && unknown == 0);
+
+        // The game moved the grid: it is where the hits are.
+        for (const cv::Point shift : {cv::Point(0, -20), cv::Point(1, -35), cv::Point(-1, 12)}) {
+            frame = blank.clone();
+            for (int n = 0; n < 5; ++n) {
+                draw(frame, n == 2 ? damaged(art[ids[n]]) : art[ids[n]], place(n, shift));
+            }
+            std::tie(items, unknown) = read(frame);
+            CHECK(items.size() == 5 && items.contains(ids[2]) && unknown == 0);
+        }
+
+        // At other screen sizes.
+        for (const int height : {720, 1440}) {
+            frame = blank.clone();
+            for (int n = 0; n < 5; ++n) {
+                draw(frame, n == 2 ? damaged(art[ids[n]]) : art[ids[n]], place(n));
+            }
+            const double s = static_cast<double>(height) / 1080.0;
+            cv::Mat scaled;
+            cv::resize(frame, scaled, {}, s, s, s < 1.0 ? cv::INTER_AREA : cv::INTER_CUBIC);
+            const std::vector<cv::Rect> scaledRows = toPixels(cfg.enemyRows, scaled.size());
+            VisionEngine engine(itemVisionConfig(cfg));
+            engine.loadTemplates(folder);
+            std::vector<Detection> hits = engine.scan(scaled, scaledRows);
+            assignToRows(hits, scaledRows);
+            engine.fillGaps(scaled, scaledRows, hits);
+            CHECK(hits.size() >= 4);
+            CHECK(std::ranges::none_of(hits, [](const Detection& d) { return d.slot != 2; }));
+        }
+    }
+
+    // ---- Finding the hero your HUD names among your team's portraits ------------------------------
+    {
+        const fs::path folder = tmp / "find_hero";
+        fs::create_directories(folder);
+        std::map<std::string, cv::Mat> art;
+        for (const std::string& id : {std::string("lash"), std::string("infernus"), std::string("abrams")}) {
+            art[id] = makeHeroArt(rng);
+            cv::imwrite((folder / (id + ".png")).string(), art[id]);
+        }
+        HeroRecognizer heroes(heroConfig(cfg));
+        heroes.loadTemplates(folder);
+        cv::Mat frame(1080, 1920, CV_8UC3, cv::Scalar(30, 25, 25));
+        const std::vector<cv::Rect> boxes = toPixels(mirrored(cfg.enemyPortraits), frame.size());
+        pasteArt(frame, art["infernus"], boxes[0].tl() + cv::Point(kArtOffsetX, 0), 0.25);
+        pasteArt(frame, art["lash"], boxes[1].tl() + cv::Point(kArtOffsetX, 0), 0.27);
+        double score = 0.0;
+        CHECK(heroes.findHero(frame, boxes, "lash", &score) == 1);
+        CHECK(score > 0.9);
+        CHECK(heroes.findHero(frame, boxes, "infernus") == 0);
+        CHECK(heroes.findHero(frame, boxes, "abrams") == -1);    // not on your team
+        CHECK(heroes.findHero(frame, boxes, "no_such_hero") == -1);
     }
 
     // ---- Margin: how far the right template is from the best wrong one --------------------

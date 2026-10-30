@@ -10,6 +10,7 @@
 #include <iostream>
 #include <iterator>
 #include <optional>
+#include <utility>
 
 namespace fs = std::filesystem;
 
@@ -31,6 +32,22 @@ constexpr double kActiveLabelStart = 0.72;
 // The label holds text, so its brightest pixels stand out from the rest. A hit without any is dark
 // art finding a dark patch of the game world. Measured: the real one 99, wrong ones at most 35.
 constexpr double kMinLabelContrast = 50.0;
+
+// Where the scoreboard puts items, in pixels at reference_height.
+constexpr int kGridLeft = 11;  // of the first icon, from the left edge of the column
+constexpr int kGridTop = 334;  // of the first line, from the top of the screen
+constexpr int kGridStep = 35;  // from one icon to the next, both ways
+constexpr int kGridColumns = 2;
+constexpr int kGridSlack = 4;      // how far an icon may be from where it should be
+constexpr int kGridTolerance = 8;  // a hit further than this from any place is not on the grid
+
+// Measured on a real frame: icons 0.94-0.98 with the next item at most 0.85 (a close relative), places
+// without an item at most 0.78 and usually about 0.5.
+constexpr double kGapMinScore = 0.65;
+constexpr double kGapMinLead = 0.05;
+constexpr double kNextMinScore = 0.75;
+constexpr double kNextMinLead = 0.10;
+constexpr size_t kCellFinalists = 6;  // items a place is compared with in colour, after a first look in grey
 
 bool showsActiveLabel(const cv::Mat& iconBgr)
 {
@@ -387,6 +404,169 @@ std::vector<Detection> VisionEngine::scan(const cv::Mat& frameBgr, const std::ve
         }
     }
     return suppressOverlaps(std::move(all));
+}
+
+VisionEngine::CellMatch VisionEngine::matchCell(const cv::Mat& frameBgr, cv::Rect window) const
+{
+    CellMatch match;
+    window &= cv::Rect(0, 0, frameBgr.cols, frameBgr.rows);
+    if (window.empty()) {
+        return match;
+    }
+    cv::Mat search, coarse;
+    cv::resize(frameBgr(window), search, {}, cfg_.downscale, cfg_.downscale, cv::INTER_AREA);
+    cv::cvtColor(search, coarse, cv::COLOR_BGR2GRAY);
+    cv::resize(coarse, coarse, {}, 0.5, 0.5, cv::INTER_AREA);
+
+    // In grey at half size first, as scan() does: this runs on every column.
+    cv::Mat response;
+    std::vector<std::pair<double, const Template*>> candidates;
+    for (const Template& t : templates_) {
+        if (t.scaled.empty() || t.scaled.cols > search.cols || t.scaled.rows > search.rows || t.coarse.cols > coarse.cols ||
+            t.coarse.rows > coarse.rows) {
+            continue;
+        }
+        matchNormed(coarse, t.coarse, t.coarseMask, response);
+        double score = 0.0;
+        cv::minMaxLoc(response, nullptr, &score);
+        candidates.emplace_back(score, &t);
+    }
+    const auto finalists = std::min(kCellFinalists, candidates.size());
+    std::ranges::partial_sort(candidates, candidates.begin() + static_cast<std::ptrdiff_t>(finalists), std::greater{},
+                              [](const auto& c) { return c.first; });
+    candidates.resize(finalists);
+
+    cv::Rect at;
+    for (const auto& [coarseScore, t] : candidates) {
+        matchNormed(search, t->scaled, t->scaledMask, response);
+        double score = 0.0;
+        cv::Point loc;
+        cv::minMaxLoc(response, nullptr, &score, nullptr, &loc);
+        if (score > match.score) {
+            if (!match.best || match.best->id != t->id) {
+                match.runnerUp = match.score;
+            }
+            match.score = score;
+            match.best = t;
+            at = cv::Rect(loc.x, loc.y, t->scaled.cols, t->scaled.rows);
+        } else if (score > match.runnerUp && match.best && match.best->id != t->id) {
+            match.runnerUp = score;
+        }
+    }
+    if (match.best) {
+        const double toFrame = 1.0 / cfg_.downscale;
+        match.box = cv::Rect(window.x + static_cast<int>(at.x * toFrame), window.y + static_cast<int>(at.y * toFrame),
+                             static_cast<int>(at.width * toFrame), static_cast<int>(at.height * toFrame));
+        match.activeLabel = match.best->activeLook && showsActiveLabel(search(at));
+    }
+    return match;
+}
+
+void VisionEngine::fillGaps(const cv::Mat& frameBgr, const std::vector<cv::Rect>& columns, std::vector<Detection>& hits)
+{
+    if (templates_.empty()) {
+        return;
+    }
+    prepareTemplates(frameBgr.rows);
+
+    const double scale = static_cast<double>(frameBgr.rows) / cfg_.referenceHeight * cfg_.iconScale;
+    const int step = static_cast<int>(std::lround(kGridStep * scale));
+    const int icon = static_cast<int>(std::lround(cfg_.templateHeight * scale));
+    const int slack = static_cast<int>(std::lround(kGridSlack * scale));
+    const int tolerance = static_cast<int>(std::lround(kGridTolerance * scale));
+    const int gridTop = static_cast<int>(std::lround(kGridTop * scale));
+    if (step <= 0 || icon <= 0) {
+        return;
+    }
+
+    std::vector<Detection> found;
+    for (size_t c = 0; c < columns.size(); ++c) {
+        const cv::Rect column = columns[c] & cv::Rect(0, 0, frameBgr.cols, frameBgr.rows);
+        if (column.empty()) {
+            continue;
+        }
+        const int gridLeft = column.x + static_cast<int>(std::lround(kGridLeft * scale));
+
+        // The grid is where the hits say it is, should the game have moved it.
+        int firstLine = gridTop;
+        std::vector<Detection> own;
+        std::ranges::copy_if(hits, std::back_inserter(own), [&](const Detection& d) { return d.slot == static_cast<int>(c) && !d.isHero; });
+        if (!own.empty()) {
+            const int topHit = std::ranges::min_element(own, {}, [](const Detection& d) { return d.box.y; })->box.y;
+            firstLine = topHit;
+            while (firstLine - step >= std::min(gridTop, topHit) - step / 2) {
+                firstLine -= step;
+            }
+        }
+        const int lines = (column.br().y - firstLine + step - icon) / step;
+
+        // Which places hold a hit.
+        std::vector<cv::Point> offsets;
+        std::vector<bool> taken(static_cast<size_t>(std::max(0, lines) * kGridColumns), false);
+        int last = -1;
+        for (const Detection& d : own) {
+            const int across = static_cast<int>(std::lround(static_cast<double>(d.box.x - gridLeft) / step));
+            const int down = static_cast<int>(std::lround(static_cast<double>(d.box.y - firstLine) / step));
+            const cv::Point off(d.box.x - gridLeft - across * step, d.box.y - firstLine - down * step);
+            if (across < 0 || across >= kGridColumns || down < 0 || down >= lines || std::abs(off.x) > tolerance ||
+                std::abs(off.y) > tolerance) {
+                continue;
+            }
+            const int place = down * kGridColumns + across;
+            taken[static_cast<size_t>(place)] = true;
+            last = std::max(last, place);
+            offsets.push_back(off);
+        }
+        cv::Point shift(0, 0);
+        if (!offsets.empty()) {
+            std::ranges::nth_element(offsets, offsets.begin() + static_cast<std::ptrdiff_t>(offsets.size() / 2), {}, &cv::Point::x);
+            shift.x = offsets[offsets.size() / 2].x;
+            std::ranges::nth_element(offsets, offsets.begin() + static_cast<std::ptrdiff_t>(offsets.size() / 2), {}, &cv::Point::y);
+            shift.y = offsets[offsets.size() / 2].y;
+        }
+        const auto placeBox = [&](int place) {
+            return cv::Rect(gridLeft + shift.x + (place % kGridColumns) * step, firstLine + shift.y + (place / kGridColumns) * step, icon, icon);
+        };
+        std::vector<Detection> filled;
+        const auto alreadyHas = [&](const std::string& id) {
+            return std::ranges::find(own, id, &Detection::itemId) != own.end() || std::ranges::find(filled, id, &Detection::itemId) != filled.end();
+        };
+        const auto look = [&](int place) {
+            const cv::Rect box = placeBox(place);
+            return matchCell(frameBgr, cv::Rect(box.x - slack, box.y - slack, box.width + 2 * slack, box.height + 2 * slack));
+        };
+
+        // Before the last hit: there has to be an item.
+        for (int place = 0; place < last; ++place) {
+            if (taken[static_cast<size_t>(place)]) {
+                continue;
+            }
+            const CellMatch m = look(place);
+            if (m.best && m.score >= kGapMinScore && m.score - m.runnerUp >= kGapMinLead && !alreadyHas(m.best->id)) {
+                filled.push_back({m.best->id, m.box, m.score, static_cast<int>(c)});
+            } else {
+                filled.push_back({kUnknownItem, placeBox(place), m.score, static_cast<int>(c)});
+            }
+        }
+        // More places nothing fits than things recognised: rather a stray hit far down the column, than
+        // a player whose items all went unrecognised.
+        const auto unknown = std::ranges::count(filled, std::string(kUnknownItem), &Detection::itemId);
+        if (unknown > std::ssize(own) + std::ssize(filled) - unknown) {
+            std::erase_if(filled, [](const Detection& d) { return d.itemId == kUnknownItem; });
+        }
+        // After it: only what clearly is an item, and the list ends at the first place that is not.
+        for (int place = last + 1; place < static_cast<int>(taken.size()); ++place) {
+            const CellMatch m = look(place);
+            const bool sure = m.best && m.score >= kNextMinScore && m.score - m.runnerUp >= kNextMinLead &&
+                              (!m.best->activeLook || m.activeLabel) && !alreadyHas(m.best->id);
+            if (!sure) {
+                break;
+            }
+            filled.push_back({m.best->id, m.box, m.score, static_cast<int>(c)});
+        }
+        found.insert(found.end(), std::make_move_iterator(filled.begin()), std::make_move_iterator(filled.end()));
+    }
+    hits.insert(hits.end(), std::make_move_iterator(found.begin()), std::make_move_iterator(found.end()));
 }
 
 void VisionEngine::collectPeaks(cv::Mat& response, const Template& t, cv::Point roiOrigin,

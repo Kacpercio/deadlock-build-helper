@@ -305,6 +305,28 @@ int main(int, char** argv)
         CHECK(cheaper.size() == 1 && cheaper[0].cost == 2400 && cheaper[0].upgrades == "Part" && cheaper[0].buildFrom.empty());
     }
 
+    // ---- A place on the scoreboard that holds an item nothing could be matched to ----------------
+    {
+        const auto at = [](const std::string& id, int x) {
+            return Detection{id, cv::Rect(x, 100, 27, 27), 0.9, 0};
+        };
+        ScoreboardMemory m;
+        auto known = m.update({at("critshot", 0), at(kUnknownItem, 35)});
+        CHECK(known.size() == 2);
+        // It counts for one look only, unlike an item.
+        known = m.update({at("critshot", 0)});
+        CHECK(known.size() == 1 && known[0].itemId == "critshot");
+        // An earlier look recognised what is there.
+        m.update({at("rapid_rounds", 35)});
+        known = m.update({at("critshot", 0), at(kUnknownItem, 35)});
+        CHECK(known.size() == 2 && std::ranges::none_of(known, [](const Detection& d) { return d.itemId == kUnknownItem; }));
+
+        SuggestInput in;
+        const auto players = describePlayers({at("critshot", 0), at(kUnknownItem, 35), at(kUnknownItem, 70)}, 6, db, {0.6, 3}, in);
+        CHECK(players.size() == 1 && players[0].unknownItems == 2 && players[0].itemIds == std::vector<std::string>{"critshot"});
+        CHECK(in.items.size() == 1 && in.items.contains("critshot"));
+    }
+
     // ---- The scoreboard's memory: a weak look never undoes a good one -------------------------
     {
         const auto ids = [](const std::vector<Detection>& known, int slot) {

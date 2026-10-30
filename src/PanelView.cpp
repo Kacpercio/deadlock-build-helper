@@ -293,19 +293,26 @@ void drawPlayer(Canvas& c, const EnemyPlayer& p, const PanelIcons& icons, const 
     }
     line += nameHeight + c.px(1.0f);
 
-    if (p.itemIds.empty()) {
+    if (p.itemIds.empty() && p.unknownItems == 0) {
         line += c.text(ImVec2(x, line), false, kSmall, kMuted, "no items yet");
     } else {
         const float owned = c.px(kOwnedIcon);
         const float step = owned + c.px(2.0f);
         float ownedX = x;
-        for (const auto& id : p.itemIds) {
+        const auto nextPlace = [&] {
             if (ownedX + owned > c.left() + c.width()) {
                 ownedX = x;
                 line += step;
             }
-            c.picture(ImVec2(ownedX, line), owned, c.drawing() ? icons.item(id) : ImTextureID{}, kRule, {});
+            const ImVec2 place(ownedX, line);
             ownedX += step;
+            return place;
+        };
+        for (const auto& id : p.itemIds) {
+            c.picture(nextPlace(), owned, c.drawing() ? icons.item(id) : ImTextureID{}, kRule, {});
+        }
+        for (int i = 0; i < p.unknownItems; ++i) {
+            c.picture(nextPlace(), owned, ImTextureID{}, kMuted, "?");
         }
         line += step;
     }

@@ -67,6 +67,14 @@ public:
     // Reports an item at most once per column, which is all a player can own.
     std::vector<Detection> scan(const cv::Mat& frameBgr, const std::vector<cv::Rect>& columns);
 
+    // scan() needs a score high enough to be sure with nothing else to go on. But the scoreboard fills
+    // two icons per line in buying order, so whatever comes before the last hit of a column must be an
+    // item too. Those places are compared with every item again and need much less; when even that fails
+    // they are reported as kUnknownItem. Places after the last hit have nothing to vouch for them, so
+    // they must score nearly as much as a hit. `hits`: scan()'s result with slots assigned; `columns`:
+    // what those slots refer to.
+    void fillGaps(const cv::Mat& frameBgr, const std::vector<cv::Rect>& columns, std::vector<Detection>& hits);
+
     double iconScale() const { return cfg_.iconScale; }
 
     // Tries icon scales in [from, to] (coarse pass, then a fine pass around the best) and keeps
@@ -86,6 +94,15 @@ private:
         cv::Mat coarseMask;
         bool activeLook = false;  // see addActiveItems()
     };
+
+    struct CellMatch {
+        const Template* best = nullptr;
+        cv::Rect box;  // in the frame
+        double score = -1.0;
+        double runnerUp = -1.0;  // the best other item
+        bool activeLabel = false;
+    };
+    CellMatch matchCell(const cv::Mat& frameBgr, cv::Rect window) const;
 
     void prepareTemplates(int frameHeight);
     void collectPeaks(cv::Mat& response, const Template& t, cv::Point roiOrigin,

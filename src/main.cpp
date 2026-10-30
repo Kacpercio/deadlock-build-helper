@@ -122,7 +122,8 @@ std::string aboutYou(const AnalysisResult& r)
     if (r.mySlot < 0) {
         return "You: not found on the scoreboard";
     }
-    return std::format("{} items, {} souls spent", r.me.itemIds.size(), r.mySouls);
+    const std::string unknown = r.me.unknownItems > 0 ? std::format(" + {} not recognised", r.me.unknownItems) : "";
+    return std::format("{} items{}, {} souls spent", r.me.itemIds.size(), unknown, r.mySouls);
 }
 
 std::string calibrationBanner(const Hotkeys& keys)

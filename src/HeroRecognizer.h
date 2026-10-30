@@ -50,6 +50,11 @@ public:
     // was last recognised at. Not accepted (a different hero, say) means recognize() has to tell.
     HeroVerdict confirm(const cv::Mat& frameBgr, cv::Rect box, const std::string& id) const;
 
+    // Which of `boxes` shows this hero, or -1. Knowing whom to look for, it accepts far less than
+    // recognize() does, which is what finds a hero wearing a skin or under an effect. `score` gets the
+    // best score, found or not.
+    int findHero(const cv::Mat& frameBgr, const std::vector<cv::Rect>& boxes, const std::string& id, double* score = nullptr) const;
+
 private:
     struct Variant {
         cv::Mat color;

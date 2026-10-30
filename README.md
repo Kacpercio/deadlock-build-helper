@@ -54,7 +54,7 @@ deadlock-build-helper/
 │  ├─ config.json          hotkeys, enemy rows, thresholds, panel position
 │  ├─ counters.json        items / builds / heroes -> counters (generated, see "Counter data")
 │  ├─ templates/           one PNG per item icon (not in git: tools/fetch_icons.py); ITEM_IDS.txt lists the names
-│  ├─ icons/               active items' shop art, for the panel's pictures only (not in git: tools/fetch_icons.py)
+│  ├─ icons/               active items' shop art, for recognising them and for the panel's pictures (not in git: tools/fetch_icons.py)
 │  └─ heroes/              one PNG per hero (not in git: tools/fetch_heroes.py); HERO_IDS.txt lists the names
 ├─ tests/
 │  ├─ logic_tests.cpp      config, counters, ranking, per-enemy analysis
@@ -215,6 +215,14 @@ when you already own one.
 Pick it again if you change your nickname or resolution. It does not read text, so nothing is typed: a
 typed nickname would need OCR. On two real frames the nickname scored 0.998 or more, and other text at
 most 0.46.
+
+**Items that are not recognised.** The scoreboard fills two places per line in buying order, so a place
+before a column's last recognised item has to hold an item as well. It is compared with every item again at
+a much lower bar, and if that fails too it shows as a "?" in the panel instead of going missing.
+
+**Who you are.** Two independent signs: your nickname's column (click it in the F10 menu), and the column
+showing the art of the hero your HUD says you play. The F10 menu shows what each one says. When they
+disagree the nickname wins, as it is the one you can correct.
 
 **Teaching icons.** If an item you can see is not recognised, click it on the enlarged strips under "Teach
 an icon" and pick its name; it is saved as `assets\templates\<id>@active.png` and recognised from then on.

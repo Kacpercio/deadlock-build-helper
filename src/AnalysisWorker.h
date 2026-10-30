@@ -80,7 +80,7 @@ private:
     void pickMe(int allySlot);
     void learnIcon(const std::string& itemId, cv::Rect box);
     void saveLastScan();
-    void loadItemTemplates(VisionEngine& vision) const;
+    size_t loadItemTemplates(VisionEngine& vision) const;  // returns how many are active items
     void addMe(const cv::Mat& frame, AnalysisResult& result, SuggestInput& input);
     int itemSouls(const std::vector<EnemyPlayer>& team) const;
     void saveDebugImages(cv::Mat& frame, const cv::Rect& searchArea, const std::vector<cv::Rect>& rows,
@@ -98,6 +98,7 @@ private:
     AbilityBar abilityBar_;
     // Where you were last found: kept while nothing says otherwise and that column still has that hero,
     // for when the ability bar is under an effect.
+    size_t activeTemplates_ = 0;
     int lastMySlot_ = -1;
     std::string lastMyHero_;
     NameTemplate myName_;

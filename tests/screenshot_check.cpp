@@ -93,6 +93,10 @@ int main(int argc, char** argv)
     std::printf("you, by your abilities: %s %.3f, next %.3f: %s (%zu heroes loaded)\n", you.id.c_str(), you.score, you.runnerUp,
                 you.accepted ? "recognised" : "rejected", bar.heroCount());
 
+    double artScore = 0.0;
+    const int artColumn = you.accepted ? heroes.findHero(frame, toPixels(mirrored(cfg.enemyPortraits), frame.size()), you.id, &artScore) : -1;
+    std::printf("you, by your hero's art: column %d of your team, score %.3f\n", artColumn, artScore);
+
     cv::Mat annotated = frame.clone();
     const auto rowCount = static_cast<int>(cfg.enemyRows.size());
     const auto start = std::chrono::steady_clock::now();
@@ -120,11 +124,11 @@ int main(int argc, char** argv)
                         v.accepted ? "recognised" : "rejected");
         }
         for (const auto& p : players) {
-            std::printf("  #%d %s%s%s\n", p.slot + 1, p.hero.empty() ? "(hero not recognised)" : p.hero.c_str(),
-                        p.build.empty() ? "" : " - ", p.build.c_str());
+            std::printf("  #%d %s%s%s, %zu items + %d not recognised\n", p.slot + 1, p.hero.empty() ? "(hero not recognised)" : p.hero.c_str(),
+                        p.build.empty() ? "" : " - ", p.build.c_str(), p.itemIds.size(), p.unknownItems);
             for (const auto& d : side) {
                 if (d.slot == p.slot && !d.isHero) {
-                    std::printf("      %-28s %.3f\n", counters.displayName(d.itemId).c_str(), d.score);
+                    std::printf("      %-28s %.3f at %d,%d\n", counters.displayName(d.itemId).c_str(), d.score, d.box.x, d.box.y);
                     teamSouls[team] += counters.costOf(d.itemId);
                 }
             }
