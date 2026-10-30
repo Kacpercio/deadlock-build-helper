@@ -388,9 +388,9 @@ void Overlay::render(const OverlayModel& model)
     }
     if (hasContent) {
         // Only calibration needs the whole monitor. The smaller the window, the less DWM has to blend.
-        const bool small = !model.visible && !model.reminder;
+        const bool miniOnly = !model.visible && !model.reminder;
         setBounds(model.calibrating || menuOpen ? rect_
-                  : small                       ? panelBounds(model, kMiniWidth, kMiniHeight)
+                  : miniOnly                    ? panelBounds(model, kMiniWidth, kMiniHeight)
                                                 : panelBounds(model, kPanelWidth, 1.0f));
     }
     if (hasContent && !windowShown_) {
