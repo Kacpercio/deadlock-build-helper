@@ -38,5 +38,15 @@ struct PanelIcons {
 void drawPanel(const PanelModel& model, ImVec2 pos, float width, float maxHeight, const PanelStyle& style,
                const PanelIcons& icons);
 
+// What the small summary shows, always on screen.
+struct MiniModel {
+    bool scanned = false;          // false: nothing known yet
+    int yourTeamSouls = 0;         // what the items recognised on each team cost
+    int enemySouls = 0;
+    std::string age;               // how old this is, such as "2 min ago"
+    std::vector<Suggestion> next;  // up to three, first to buy first
+};
+void drawMiniPanel(const MiniModel& model, ImVec2 pos, float width, const PanelStyle& style, const PanelIcons& icons);
+
 // A small note instead of the panel, such as a reminder.
 void drawReminder(const Suggestion& next, ImVec2 pos, float width, const PanelStyle& style, const PanelIcons& icons);

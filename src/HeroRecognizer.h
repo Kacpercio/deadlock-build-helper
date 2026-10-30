@@ -3,6 +3,7 @@
 #include <opencv2/core.hpp>
 
 #include <filesystem>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -45,6 +46,10 @@ public:
 
     HeroVerdict recognize(const cv::Mat& frameBgr, cv::Rect box) const;
 
+    // The same answer at a fraction of the work when you expect this hero: looks only at the scale it
+    // was last recognised at. Not accepted (a different hero, say) means recognize() has to tell.
+    HeroVerdict confirm(const cv::Mat& frameBgr, cv::Rect box, const std::string& id) const;
+
 private:
     struct Variant {
         cv::Mat color;
@@ -59,6 +64,16 @@ private:
 
     static Variant makeVariant(const cv::Mat& image, const cv::Mat& mask);
 
+    struct Search {
+        cv::Rect box;        // in the frame
+        double toReference;  // frame pixels -> pixels at reference_height
+        cv::Mat image;       // the box at reference_height
+    };
+    Search prepareSearch(const cv::Mat& frameBgr, cv::Rect box) const;
+    void bestOf(const Hero& hero, size_t first, size_t last, const Search& search, double& score, cv::Rect& box,
+                size_t& variant) const;
+
     HeroConfig cfg_;
     std::vector<Hero> heroes_;
+    mutable std::map<std::string, size_t> lastVariant_;  // the variant each hero was last recognised at
 };

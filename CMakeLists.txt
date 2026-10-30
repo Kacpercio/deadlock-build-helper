@@ -19,6 +19,7 @@ set(DBH_CORE_SOURCES
     src/Config.cpp
     src/VisionEngine.cpp
     src/HeroRecognizer.cpp
+    src/AbilityBar.cpp
     src/CounterDatabase.cpp
     src/PlayerAnalysis.cpp
 )

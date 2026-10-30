@@ -171,14 +171,13 @@ void SettingsMenu::drawScoreboard(const MenuContext& context, MenuActions& actio
         return;
     }
     if (context.justPicked) {
-        ImGui::TextWrapped(context.nicknameSet ? "Saved. It is used from the next scan on." : "Nickname forgotten.");
-    } else if (!context.nicknameSet) {
-        ImGui::TextWrapped("Click your nickname on your team's side (the green boxes). You only do this once.");
+        ImGui::TextWrapped(context.nicknameSet ? "Saved. It is used from the next scan on, when your HUD does not tell." : "Nickname forgotten.");
     } else if (context.mySlot >= 0) {
         const std::string hero = context.myHero.empty() ? "hero not recognised" : context.myHero;
-        ImGui::Text("Found you on the last scan: %s. Click another box if that is wrong.", hero.c_str());
+        ImGui::Text("Found you on the last scan: %s (pink box).", hero.c_str());
     } else {
-        ImGui::TextWrapped("Nickname saved, but it was not on the last scan. Hold TAB in a match to check it.");
+        ImGui::TextWrapped("Not found on the last scan. If your hero's portrait is not recognised either, click your "
+                           "nickname among the green boxes: that is the fallback.");
     }
     if (context.nicknameSet) {
         ImGui::SameLine();
@@ -355,6 +354,9 @@ void SettingsMenu::drawRecognition(MenuActions& actions)
     actions.apply = sliderDouble("Hero lead over the next-best", edited_.heroMargin, 0.05, 0.60, "%.2f") || actions.apply;
     actions.apply = sliderInt("Scan threads (more = quicker scan, less for the game)", edited_.scanThreads, 1, 8) || actions.apply;
     actions.apply = sliderInt("Wait after pressing TAB (ms)", edited_.captureDelayMs, 0, 1000) || actions.apply;
+    if (ImGui::Checkbox("Small summary on screen all the time (can cost some FPS)", &edited_.miniPanel)) {
+        actions.apply = true;
+    }
     actions.apply = sliderInt("Keep the panel after TAB (ms)", edited_.panelHoldMs, 0, 20000) || actions.apply;
     actions.apply = sliderInt("Buying reminder every (minutes, 0 = off)", edited_.reminderMinutes, 0, 15) || actions.apply;
     actions.apply = sliderInt("Suggestions shown", edited_.maxSuggestions, 3, 10) || actions.apply;
@@ -379,6 +381,7 @@ void SettingsMenu::drawHotkeys()
     ImGui::TextDisabled("Click a key, then press the new one. Escape cancels.");
     keyRow("Read the scoreboard", edited_.hotkeys.scoreboard);
     keyRow("Pin the panel", edited_.hotkeys.pinPanel);
+    keyRow("Small summary on/off", edited_.hotkeys.miniPanel);
     keyRow("This menu", edited_.hotkeys.menu);
     keyRow("Calibration mode", edited_.hotkeys.calibrate);
     keyRow("Reload files", edited_.hotkeys.reload);

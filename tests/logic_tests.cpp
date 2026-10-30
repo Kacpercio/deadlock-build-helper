@@ -62,7 +62,8 @@ int main(int, char** argv)
         CHECK(l.config.enemyRows.size() == 6);
         CHECK(near(l.config.enemyRows[5].x, 0.5555 + 5 * 0.04586));
         CHECK(near(l.config.enemyRows[5].y, 0.2741));
-        CHECK(l.config.captureDelayMs == 120 && l.config.rescanDelayMs == 300);
+        CHECK(l.config.captureDelayMs == 150 && l.config.rescanDelayMs == 300);
+        CHECK(l.config.miniPanel && l.config.hotkeys.miniPanel == 0x73);
         CHECK(l.config.panelHoldMs == 5000 && l.config.reminderMinutes == 3);
         CHECK(l.config.allyNames.size() == 6);
         CHECK(near(l.config.allyNames[1].x, 0.4021 - 0.04586));
@@ -302,6 +303,57 @@ int main(int, char** argv)
         want.owned = {"part"};
         const auto cheaper = small.suggest(want, 3);
         CHECK(cheaper.size() == 1 && cheaper[0].cost == 2400 && cheaper[0].upgrades == "Part" && cheaper[0].buildFrom.empty());
+    }
+
+    // ---- The scoreboard's memory: a weak look never undoes a good one -------------------------
+    {
+        const auto ids = [](const std::vector<Detection>& known, int slot) {
+            std::vector<std::string> out;
+            for (const auto& d : known) {
+                if (d.slot == slot) out.push_back(d.itemId);
+            }
+            std::ranges::sort(out);
+            return out;
+        };
+        using Ids = std::vector<std::string>;
+
+        ScoreboardMemory m;
+        m.update({hero("haze", 0), item("critshot", 0), item("rapid_rounds", 0), hero("abrams", 1), item("health", 1)});
+        CHECK((ids(m.update({}), 0) == Ids{"critshot", "haze", "rapid_rounds"}));   // saw nothing
+
+        // Caught fading in: Haze not recognised, one item seen. Nothing is lost.
+        auto known = m.update({item("critshot", 0)});
+        CHECK((ids(known, 0) == Ids{"critshot", "haze", "rapid_rounds"}));
+
+        // New purchases add up.
+        known = m.update({hero("haze", 0), item("critshot", 0), item("rapid_rounds", 0), item("glass_cannon", 0)});
+        CHECK((ids(known, 0) == Ids{"critshot", "glass_cannon", "haze", "rapid_rounds"}));
+
+        // Sold: gone only after several looks with the hero in full view and no item.
+        for (int look = 0; look < 3; ++look) {
+            known = m.update({hero("haze", 0), item("critshot", 0), item("glass_cannon", 0)});
+        }
+        CHECK((ids(known, 0) == Ids{"critshot", "glass_cannon", "haze", "rapid_rounds"}));
+        known = m.update({hero("haze", 0), item("critshot", 0), item("glass_cannon", 0)});
+        CHECK((ids(known, 0) == Ids{"critshot", "glass_cannon", "haze"}));
+
+        // Seen again in between: the count starts over.
+        for (int look = 0; look < 3; ++look) m.update({hero("abrams", 1)});
+        m.update({hero("abrams", 1), item("health", 1)});
+        for (int look = 0; look < 3; ++look) known = m.update({hero("abrams", 1)});
+        CHECK((ids(known, 1) == Ids{"abrams", "health"}));
+
+        // Another hero in one column: the old one's items go with them.
+        known = m.update({hero("seven", 1)});
+        CHECK((ids(known, 1) == Ids{"seven"}));
+        CHECK(!ids(known, 0).empty());
+
+        // Most columns change: a new match, nothing carries over.
+        m.update({hero("kelvin", 2)});
+        known = m.update({hero("ivy", 0), hero("mina", 1), hero("yamato", 2)});
+        CHECK((ids(known, 0) == Ids{"ivy"}));
+        CHECK((ids(known, 1) == Ids{"mina"}));
+        CHECK((ids(known, 2) == Ids{"yamato"}));
     }
 
     // ---- What enemies bought since the last look ----------------------------------------------

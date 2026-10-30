@@ -35,6 +35,7 @@ All of them only react while the Deadlock window is focused, and can be changed 
 | --- | --- |
 | **TAB** | Show the panel. A short press is enough: it stays up for `panel_hold_ms` after release |
 | **F10** | Settings menu: pick your nickname, move the boxes and the panel, thresholds, hotkeys |
+| **F4** | Small summary on or off |
 | **F5** | Pin the panel: the last result stays on screen after TAB is released, for instance over the shop |
 | **TAB + F6** | Auto-tune the icon size to your screen; saved to `assets/calibration.json` |
 | **F7** | Toggle calibration mode: enemy rows (yellow) and live detections (green) drawn over the game |
@@ -191,11 +192,10 @@ the left, the enemy team on the right.
 
 **Check a screenshot without the game.** Build with `-DDBH_BUILD_TESTS=ON` and run
 ```powershell
-.\build\screenshot_check.exe C:\path\to\shot.png build\assets --allies --out checked.png
+.\build\screenshot_check.exe C:\path\to\shot.png build\assets --out checked.png
 ```
-It runs the same recognition as the app on a saved screenshot, prints every enemy's (and
-with `--allies` your team's) portrait scores, items, build and the suggestions, and draws the boxes
-into `checked.png`.
+It runs the same recognition as the app on a saved screenshot, prints both teams' portrait scores, items
+and builds and the suggestions, and draws the boxes into `checked.png`.
 
 ## Settings menu and finding you
 
@@ -205,9 +205,15 @@ your last scan, with the boxes the helper reads drawn on it. Changes apply when 
 are saved to `assets\settings.json` next to the exe: only what differs from `config.json`, and they
 survive rebuilds. **Reset to defaults** deletes that file.
 
-**You.** Hold TAB once, open the menu and click your nickname among the green boxes. The helper saves a
-picture of it (`assets\my_name.png`) and from then on finds you by that picture, in whichever column and
-on whichever hero. The panel then shows your hero and items, warns about items of yours that do badly
+**You.** The helper finds you by itself. The ability bar at the bottom of your HUD shows your hero's four
+abilities, and `tools\fetch_heroes.py` downloads what they look like (`assets\abilities`). On two real
+frames (Lash and Venator), also resampled to 720p and 1440p, the right hero scored 0.945-0.975 and the next
+best at most 0.42.
+Your column is then the one with that hero's portrait.
+
+The nickname is the fallback, for when your portrait is not recognised: hold TAB once, open the menu and
+click yours among the green boxes. It is saved as a picture (`assets\my_name.png`) and found in whichever
+column you are. The panel shows your hero and items, warns about items of yours that do badly
 against these enemies, leaves what you own out of the suggestions, and ranks answers to a threat lower
 when you already own one.
 Pick it again if you change your nickname or resolution. It does not read text, so nothing is typed: a
@@ -218,6 +224,20 @@ most 0.46.
 scored 0.45 on a real icon, below other items). Under "Teach an icon", click one on the enlarged strips and
 pick its name; it is saved as `assets\templates\<id>@active.png` and recognised from then on. Copy these
 into the project's `assets\templates` if you want them to survive deleting `build`.
+
+## The small summary
+
+While the game has focus, a small box stays at the panel's position: how the items recognised on your team
+compare in souls with the enemy's (`+3200 team items`), how old that is, and the next three purchases.
+It is not your team's real net worth, which includes unspent souls and items the helper does not recognise
+yet: both teams are undercounted until their active items are taught. It only changes when you scan.
+
+A window that always covers the game can cost FPS even when it is this small. **F4** turns it off, and the
+FPS counter tells you the difference.
+
+**The scoreboard is remembered.** A frame can catch the scoreboard fading in, or behind an effect. So heroes
+stay until another one is recognised in their column, and items until four looks in a row with the hero
+visible no longer show them. Most columns changing hero starts over.
 
 ## When to buy
 
@@ -286,10 +306,10 @@ cmake --build --preset release
 ctest --test-dir build --output-on-failure
 ```
 
-- `logic_tests` (174 checks): config parsing, the measured column layout, value clamping, key
+- `logic_tests` (186 checks): config parsing, the measured column layout, value clamping, key
   names, `calibration.json`, the counter database (items, heroes, builds, tips, overrides such
   as "no spirit resist vs Tankbuster"), ranking, and the per-enemy hero / item / build analysis.
-- `vision_tests` (275 checks): Unicode-safe image IO, hero template loading, then synthetic
+- `vision_tests` (312 checks): Unicode-safe image IO, hero template loading, then synthetic
   scoreboards in the real layout (27 px icons two per row in each enemy column, hero art drawn at
   0.25-0.29x from the top of the screen) with templates for all 173 items and 44 heroes, the app's
   masks and thresholds, blur, brightness shift, noise, unknown "distractor" icons, an icon between
@@ -305,7 +325,7 @@ under ThreadSanitizer (the template search runs in parallel).
 
 | Check | Result |
 | --- | --- |
-| Downloaded API icons only (123 passive), `screenshot_check --allies` | all **8 of 8** passive items found, scores 0.950-0.977, build "Spirit build" correct |
+| Downloaded API icons only (123 passive), `screenshot_check` | all **8 of 8** passive items found, scores 0.950-0.977, build "Spirit build" correct |
 | Same, enemy columns (enemy owned no items) and the rest of the screen | **0** false hits |
 | Without the corner mask | only 3 of 8 found: the mask is required for API icons |
 | Two *different* real icons | at most 0.561 alike (threshold 0.90) |
@@ -322,9 +342,10 @@ downloaded card art only:
 | Same frames resampled to 720p and 1440p | still 6 of 6 and 0 false hits, scores 0.852-0.949 |
 | 60 random game-world patches | at most 0.776, lead at most 0.282 (hence 0.80 and 0.25) |
 
-Speed (Apple M-series, one thread, whole scan with 123 templates and six portraits): ~350 ms with the
-fast scan against ~3450 ms with the thorough search (`screenshot_check --thorough`), and the same items
-found. F6 tuning takes under a second on all threads.
+Speed (Apple M-series, one thread): reading the whole board, both teams with 123 templates and 12
+portraits, takes ~700 ms the first time and ~600 ms on a later look with three heroes known and nine empty
+columns; of that, the items of 6 columns ~170 ms. A hero already known costs next to nothing, an empty
+column ~30 ms. F6 tuning takes under a second on all threads.
 
 ## Troubleshooting
 
@@ -334,6 +355,7 @@ found. F6 tuning takes under a second on all threads.
 | Game stutters when you press TAB | Check that you run the Release build (`build\`, not `build-debug\`), and try `"scan_threads": 1`. The panel's status line shows how long a scan took. |
 | Lower FPS while the panel is up | Windows composites the game with any window over it. Release TAB or unpin (F5); FPS should return as soon as the panel is gone. |
 | Panel says `no hero portraits` / `no item icons` | Run `tools\fetch_heroes.py` / `tools\fetch_icons.py`, then rebuild. |
+| `You: not found on the scoreboard` | Hold TAB, press F9 and read the console: it shows what your ability bar and nickname matched. If the score is low, run `tools\fetch_heroes.py` and rebuild. |
 | An enemy shows as `(hero unknown)` | Hold TAB, press F9 and read the console: the score and the next hero's for each portrait. A skin may need its own crop (see `assets\heroes\README.txt`). |
 | `monitor_index ... does not exist` | Set `monitor_index` (0 = first monitor found, across all GPUs). It needs a restart, not just F8. |
 | `unsupported desktop format` | Windows HDR is on for that monitor. |

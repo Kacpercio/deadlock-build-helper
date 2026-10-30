@@ -29,6 +29,8 @@ constexpr float kHeroIcon = 38.0f;
 constexpr float kOwnedIcon = 20.0f;
 constexpr float kGap = 10.0f;
 constexpr float kRowGap = 9.0f;
+constexpr float kMiniPadding = 7.0f;
+constexpr float kMiniIcon = 22.0f;
 constexpr float kBody = 15.0f;
 constexpr float kSmall = 13.0f;
 
@@ -385,6 +387,60 @@ void layout(Canvas& c, const PanelModel& model, const PanelIcons& icons, const D
 }
 
 }  // namespace
+
+void drawMiniPanel(const MiniModel& model, ImVec2 pos, float width, const PanelStyle& style, const PanelIcons& icons)
+{
+    ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0.0f), ImVec2(width, FLT_MAX));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, withAlpha(kBackground, 205));
+    ImGui::PushStyleColor(ImGuiCol_Border, kBorder);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f * style.scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(kMiniPadding * style.scale, kMiniPadding * style.scale));
+
+    constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                                       ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings |
+                                       ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
+    if (ImGui::Begin("##mini", nullptr, flags)) {
+        const float inner = width - 2.0f * kMiniPadding * style.scale;
+        Canvas c(ImGui::GetCursorScreenPos(), inner, style, true);
+
+        if (!model.scanned) {
+            c.advance(c.text(ImVec2(c.left(), c.y()), false, kSmall, kMuted, "Hold TAB once to scan."));
+        } else {
+            // Your team's items against theirs. Green: you are ahead.
+            const int gap = model.yourTeamSouls - model.enemySouls;
+            const std::string gapText = std::format("{}{}", gap > 0 ? "+" : "", gap);
+            const float h = c.text(ImVec2(c.left(), c.y()), true, kBody, gap >= 0 ? kVitality : kAvoid, gapText);
+            const float labelX = c.left() + c.measure(true, kBody, gapText).x + c.px(6.0f);
+            c.text(ImVec2(labelX, c.y() + c.px(1.0f)), false, kSmall, kMuted, "team items");
+            const ImVec2 ageSize = c.measure(false, kSmall, model.age);
+            c.text(ImVec2(c.left() + inner - ageSize.x, c.y() + c.px(1.0f)), false, kSmall, kMuted, model.age);
+            c.advance(h + c.px(5.0f));
+
+            const float iconSize = c.px(kMiniIcon);
+            for (const auto& s : model.next) {
+                const float top = c.y();
+                c.picture(ImVec2(c.left(), top), iconSize, s.itemId.empty() ? ImTextureID{} : icons.item(s.itemId),
+                          slotColor(s.slot), s.item);
+                const float x = c.left() + iconSize + c.px(6.0f);
+                const float nameHeight = c.measure(false, kSmall, s.item).y;
+                const float middle = top + (iconSize - nameHeight) * 0.5f;
+
+                const std::string price = s.cost > 0 ? std::format("{}", s.cost) : std::string{};
+                const float priceWidth = c.measure(true, kSmall, price).x;
+                const float room = c.left() + inner - x - priceWidth - c.px(6.0f);
+                c.longText(ImVec2(x, middle), kText, s.item, room, Detail{false, 0, false});
+                c.text(ImVec2(c.left() + inner - priceWidth, middle), true, kSmall, slotColor(s.slot), price);
+                c.advance(iconSize + c.px(3.0f));
+            }
+        }
+        ImGui::Dummy(ImVec2(inner, c.used()));
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor(2);
+}
 
 void drawReminder(const Suggestion& next, ImVec2 pos, float width, const PanelStyle& style, const PanelIcons& icons)
 {

@@ -139,6 +139,7 @@ void parse(const nlohmann::json& j, AppConfig& cfg)
     cfg.rescanDelayMs = j.value("rescan_delay_ms", cfg.rescanDelayMs);
     cfg.panelHoldMs = j.value("panel_hold_ms", cfg.panelHoldMs);
     cfg.reminderMinutes = j.value("reminder_minutes", cfg.reminderMinutes);
+    cfg.miniPanel = j.value("mini_panel", cfg.miniPanel);
     cfg.templateDir = j.value("template_dir", cfg.templateDir.string());
     cfg.countersFile = j.value("counters_file", cfg.countersFile.string());
     cfg.referenceHeight = j.value("reference_height", cfg.referenceHeight);
@@ -158,6 +159,7 @@ void parse(const nlohmann::json& j, AppConfig& cfg)
         readKey(h, "tune_scale", cfg.hotkeys.tuneScale);
         readKey(h, "pin_panel", cfg.hotkeys.pinPanel);
         readKey(h, "menu", cfg.hotkeys.menu);
+        readKey(h, "mini_panel", cfg.hotkeys.miniPanel);
     }
     if (j.contains("enemy_roi")) {
         cfg.enemyRoi = readRect(j["enemy_roi"], cfg.enemyRoi);
@@ -190,6 +192,7 @@ nlohmann::json menuSettings(const AppConfig& cfg)
         {"scan_threads", cfg.scanThreads},
         {"panel_hold_ms", cfg.panelHoldMs},
         {"reminder_minutes", cfg.reminderMinutes},
+        {"mini_panel", cfg.miniPanel},
         {"match_threshold", cfg.matchThreshold},
         {"hero_threshold", cfg.heroThreshold},
         {"hero_margin", cfg.heroMargin},
@@ -202,7 +205,8 @@ nlohmann::json menuSettings(const AppConfig& cfg)
           {"debug_dump", keyName(cfg.hotkeys.debugDump)},
           {"tune_scale", keyName(cfg.hotkeys.tuneScale)},
           {"pin_panel", keyName(cfg.hotkeys.pinPanel)},
-          {"menu", keyName(cfg.hotkeys.menu)}}},
+          {"menu", keyName(cfg.hotkeys.menu)},
+          {"mini_panel", keyName(cfg.hotkeys.miniPanel)}}},
     };
     if (!cfg.enemyRows.empty()) {
         const NormRect& first = cfg.enemyRows.front();

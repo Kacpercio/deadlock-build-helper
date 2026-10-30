@@ -34,6 +34,11 @@ constexpr wchar_t kClassName[] = L"DeadlockBuildHelperOverlay";
 // Share of the screen width the panel uses (left of your team's scoreboard columns).
 constexpr float kPanelWidth = 0.17f;
 
+// The small summary: as small as it can be and still hold three items. Its window is what covers the
+// game all the time, so every pixel saved here is one DWM need not blend.
+constexpr float kMiniWidth = 0.115f;
+constexpr float kMiniHeight = 0.125f;
+
 // A change needs a few frames to show: ImGui sizes a window from what it drew the frame before.
 constexpr int kFramesPerChange = 3;
 
@@ -211,14 +216,14 @@ void Overlay::setBounds(const RECT& bounds)
     createRenderTarget();
 }
 
-RECT Overlay::panelBounds(const OverlayModel& model) const
+RECT Overlay::panelBounds(const OverlayModel& model, float widthShare, float heightShare) const
 {
     const int monitorWidth = rect_.right - rect_.left;
     const int monitorHeight = rect_.bottom - rect_.top;
     const int left = rect_.left + static_cast<int>(monitorWidth * model.panelX);
     const int top = rect_.top + static_cast<int>(monitorHeight * model.panelY);
-    return {left, top, std::min<LONG>(rect_.right, left + static_cast<LONG>(std::ceil(monitorWidth * kPanelWidth))),
-            rect_.bottom};
+    return {left, top, std::min<LONG>(rect_.right, left + static_cast<LONG>(std::ceil(monitorWidth * widthShare))),
+            std::min<LONG>(rect_.bottom, top + static_cast<LONG>(std::ceil(monitorHeight * heightShare)))};
 }
 
 void Overlay::setInteractive(bool interactive)
@@ -364,7 +369,7 @@ void Overlay::keepOnTop()
 void Overlay::render(const OverlayModel& model)
 {
     const bool menuOpen = static_cast<bool>(model.menu);
-    const bool hasContent = model.visible || model.calibrating || menuOpen || model.reminder.has_value();
+    const bool hasContent = model.visible || model.calibrating || menuOpen || model.reminder.has_value() || model.mini.has_value();
 
     // Nothing on screen now and nothing last frame: skip the GPU work entirely.
     if (!hasContent && !lastFrameHadContent_) {
@@ -383,7 +388,10 @@ void Overlay::render(const OverlayModel& model)
     }
     if (hasContent) {
         // Only calibration needs the whole monitor. The smaller the window, the less DWM has to blend.
-        setBounds(model.calibrating || menuOpen ? rect_ : panelBounds(model));
+        const bool small = !model.visible && !model.reminder;
+        setBounds(model.calibrating || menuOpen ? rect_
+                  : small                       ? panelBounds(model, kMiniWidth, kMiniHeight)
+                                                : panelBounds(model, kPanelWidth, 1.0f));
     }
     if (hasContent && !windowShown_) {
         ShowWindow(hwnd_, interactive_ ? SW_SHOW : SW_SHOWNOACTIVATE);
@@ -434,6 +442,8 @@ void Overlay::drawPanelView(const OverlayModel& model)
         drawPanel(model.panel, pos, monitorWidth * kPanelWidth, monitorHeight * (1.0f - model.panelY) - 2.0f, panelStyle_, icons);
     } else if (model.reminder) {
         drawReminder(*model.reminder, pos, monitorWidth * kPanelWidth, panelStyle_, icons);
+    } else if (model.mini) {
+        drawMiniPanel(*model.mini, pos, monitorWidth * kMiniWidth, panelStyle_, icons);
     }
 }
 

@@ -7,6 +7,9 @@
 #include "VisionEngine.h"
 
 #include <filesystem>
+#include <map>
+#include <optional>
+#include <string>
 #include <vector>
 
 struct ArchetypeRule {
@@ -31,9 +34,41 @@ void assignToRows(std::vector<Detection>& detections, const std::vector<cv::Rect
 
 // Classifies portrait i as enemy i, appends the recognised heroes to `detections` and returns what
 // each box looked like, recognised or not.
+// `expected` (slot -> hero id), when given, spares most of the work for heroes already known.
 std::vector<HeroVerdict> addHeroes(const HeroRecognizer& heroes, const cv::Mat& frameBgr,
                                    const std::vector<cv::Rect>& portraits, size_t rowCount,
-                                   std::vector<Detection>& detections);
+                                   std::vector<Detection>& detections,
+                                   const std::map<int, std::string>* expected = nullptr);
+
+// Reads the whole scoreboard from one frame. Enemies are slots 0..n-1, your team n..2n-1, each column
+// where config.json has them. Empty when `enemyRows` has fewer than two columns.
+std::vector<Detection> scanBoard(const cv::Mat& frameBgr, VisionEngine& vision, const HeroRecognizer& heroes,
+                                 const AppConfig& cfg, std::vector<HeroVerdict>* verdicts = nullptr,
+                                 const std::map<int, std::string>* expectedHeroes = nullptr);
+
+// Remembers what the scoreboard showed, so that a weak look cannot undo a good one: a frame can catch
+// the scoreboard while it fades in, or under an effect. A recognised hero stays until another one is
+// recognised in that column. An item stays until several looks in a row that did recognise the column's
+// hero no longer show it: it was sold. Most columns changing hero means a new match, which starts over.
+class ScoreboardMemory {
+public:
+    // Takes one scan's detections and returns everything now known, with the same slot numbers.
+    std::vector<Detection> update(const std::vector<Detection>& scan);
+
+    // Slot -> hero id of the heroes known so far.
+    std::map<int, std::string> heroes() const;
+
+private:
+    struct Remembered {
+        Detection detection;
+        int missed = 0;  // looks in a row that should have shown it, but did not
+    };
+    struct Column {
+        std::optional<Detection> hero;
+        std::map<std::string, Remembered> items;
+    };
+    std::map<int, Column> columns_;
+};
 
 // The same boxes on the other side of the screen: your team's columns, from the enemy's.
 std::vector<NormRect> mirrored(std::vector<NormRect> boxes);

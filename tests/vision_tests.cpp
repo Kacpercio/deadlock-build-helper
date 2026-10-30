@@ -1,5 +1,6 @@
 // End-to-end test on synthetic scoreboards: the real VisionEngine, PlayerAnalysis and
 // counters.json, with the row/portrait layout from the shipped config.json.
+#include "AbilityBar.h"
 #include "Config.h"
 #include "CounterDatabase.h"
 #include "HeroRecognizer.h"
@@ -175,6 +176,8 @@ int main(int, char** argv)
         CHECK(e.loadTemplates(odd) == 1);
     }
 
+    std::mt19937 rng(1234);
+
     // ---- Your nickname: found by its picture, whatever is behind it --------------------------
     {
         const auto drawNames = [](const cv::Scalar& background, const std::vector<const char*>& names) {
@@ -212,8 +215,71 @@ int main(int, char** argv)
         CHECK(makeNameTemplate(cv::Mat(1080, 1920, CV_8UC3, cv::Scalar(10, 10, 10)), boxes[0]).empty());
     }
 
+    // ---- Which hero you play, from the ability bar ----------------------------------------------
+    {
+        const fs::path dir = tmp / "abilities";
+        fs::create_directories(dir);
+        std::map<std::string, std::vector<cv::Mat>> glyphs;
+        for (const std::string& hero : {std::string("abrams"), std::string("lady_geist"), std::string("seven")}) {
+            for (int n = 1; n <= 4; ++n) {
+                cv::Mat alpha(137, 137, CV_8U, cv::Scalar(0));
+                std::uniform_int_distribution<int> at(15, 120), rad(6, 22);
+                for (int k = 0; k < 9; ++k) {
+                    cv::circle(alpha, {at(rng), at(rng)}, rad(rng), cv::Scalar(255), cv::FILLED, cv::LINE_AA);
+                }
+                cv::Mat art;
+                cv::Mat white(137, 137, CV_8U, cv::Scalar(255));
+                cv::merge(std::vector<cv::Mat>{white, white, white, alpha}, art);
+                cv::imwrite((dir / std::format("{}_{}.png", hero, n)).string(), art);
+                glyphs[hero].push_back(alpha);
+            }
+        }
+        // Incomplete hero, an unknown one, and a file that is not an ability: all left out.
+        cv::imwrite((dir / "haze_1.png").string(), cv::Mat(137, 137, CV_8UC4, cv::Scalar(255, 255, 255, 255)));
+        cv::imwrite((dir / "atlas_1.png").string(), cv::Mat(137, 137, CV_8UC4, cv::Scalar(255, 255, 255, 255)));
+        cv::imwrite((dir / "notes.png").string(), cv::Mat(5, 5, CV_8UC4, cv::Scalar(0, 0, 0, 0)));
+
+        AbilityBar bar;
+        CHECK(bar.load(dir, db.heroIds()) == 3);
+        CHECK(!bar.recognize(cv::Mat(1080, 1920, CV_8UC3, cv::Scalar(30, 30, 30))).accepted);
+        AbilityBar none;
+        CHECK(none.load(tmp / "does_not_exist") == 0);
+        CHECK(!none.recognize(cv::Mat(1080, 1920, CV_8UC3, cv::Scalar(30, 30, 30))).accepted);
+
+        // The HUD: dark glyphs on light discs, at the measured places.
+        const auto drawBar = [&](const std::string& hero, int height, int width, int hiddenSlot) {
+            cv::Mat frame(height, width, CV_8UC3, cv::Scalar(40, 60, 90));
+            const double scale = height / 1080.0;
+            const cv::Point centres[4] = {{-134, -58}, {-45, -74}, {44, -74}, {133, -58}};
+            for (int i = 0; i < 4; ++i) {
+                const cv::Point c(width / 2 + static_cast<int>(centres[i].x * scale), height + static_cast<int>(centres[i].y * scale));
+                cv::circle(frame, c, static_cast<int>(34 * scale), cv::Scalar(235, 235, 235), cv::FILLED, cv::LINE_AA);
+                if (i == hiddenSlot) {
+                    continue;  // an effect over this one
+                }
+                cv::Mat alpha;
+                const int size = static_cast<int>(48 * scale);
+                cv::resize(glyphs.at(hero)[static_cast<size_t>(i)], alpha, cv::Size(size, size), 0, 0, cv::INTER_AREA);
+                frame(cv::Rect(c.x - size / 2, c.y - size / 2, size, size)).setTo(cv::Scalar(40, 40, 40), alpha > 127);
+            }
+            return frame;
+        };
+        for (const auto& [height, width] : {std::pair(1080, 1920), std::pair(1440, 2560), std::pair(720, 1280), std::pair(1080, 2560)}) {
+            for (const std::string& hero : {std::string("abrams"), std::string("seven")}) {
+                const HeroVerdict v = bar.recognize(drawBar(hero, height, width, -1));
+                CHECK(v.accepted && v.id == hero);
+            }
+        }
+        const HeroVerdict covered = bar.recognize(drawBar("lady_geist", 1080, 1920, 2));
+        CHECK(covered.accepted && covered.id == "lady_geist");
+
+        // Expecting a hero: that one is confirmed, and another hero's bar still gives the right answer.
+        CHECK(bar.recognize(drawBar("seven", 1080, 1920, -1), "seven").id == "seven");
+        const HeroVerdict changed = bar.recognize(drawBar("abrams", 1080, 1920, -1), "seven");
+        CHECK(changed.accepted && changed.id == "abrams");
+    }
+
     // ---- Templates: every real item id and hero id ---------------------------------------
-    std::mt19937 rng(1234);
     std::map<std::string, cv::Mat> icons, heroArt;
     for (const auto& [id, node] : j["items"].items()) {
         icons[id] = makeIcon(rng, categoryColor(node.value("slot", "")));
@@ -260,6 +326,15 @@ int main(int, char** argv)
         // A black screen is nobody, and a flat crop (haze@crop) never wins.
         CHECK(!h.recognize(cv::Mat(1080, 1920, CV_8UC3, cv::Scalar(0, 0, 0)), box).accepted);
         CHECK(twins.id != "haze");
+
+        // Confirming: the known hero quickly, and not somebody else's portrait.
+        CHECK(h.loadTemplates(dir, known) == 2);
+        CHECK(!h.confirm(frame, box, "abrams").accepted);         // not recognised yet: no scale to look at
+        CHECK(h.recognize(frame, box).accepted);
+        const HeroVerdict again = h.confirm(frame, box, "abrams");
+        CHECK(again.accepted && again.id == "abrams" && again.box.x >= box.x);
+        CHECK(!h.confirm(frame, box, "haze").accepted);
+        CHECK(!h.confirm(frame, box, "nobody").accepted);
 
         // No templates: nothing to recognise, and no crash.
         HeroRecognizer none;
@@ -351,6 +426,9 @@ int main(int, char** argv)
             if (c.x >= rows[0].br().x && c.x < rows[1].x) ++r.gapHits;
         }
         // ...and within the columns the fast scan finds exactly the same.
+        const std::vector<Detection> wholeBoard = scanBoard(frame, vision, heroes, cfg);
+        CHECK(std::ranges::none_of(wholeBoard, [&](const Detection& d) { return d.slot >= static_cast<int>(rows.size()); }));
+        CHECK(std::ranges::count_if(wholeBoard, &Detection::isHero) == 4);
         assignToRows(thorough, rows);
         std::multiset<std::string> thoroughIds, scanIds;
         for (const auto& d : thorough) thoroughIds.insert(std::format("{}/{}", d.slot, d.itemId));

@@ -283,6 +283,7 @@ std::string AnalysisWorker::loadResources()
                                      ? 0
                                      : heroes.loadTemplates(resolvePath(root_, cfg_.heroTemplateDir), counters_.heroIds());
     heroes_ = std::move(heroes);
+    abilityBar_.load(root_ / "assets" / "abilities", counters_.heroIds());
     myName_ = loadNameTemplate(root_ / "assets" / "my_name.png");
 
     return std::format("{} item / {} hero templates, {} items + {} heroes in counters{}, {} enemy rows",
@@ -333,40 +334,44 @@ void AnalysisWorker::learnIcon(const std::string& itemId, cv::Rect box)
 void AnalysisWorker::addMe(const cv::Mat& frame, AnalysisResult& result, SuggestInput& input)
 {
     result.nicknameSet = !myName_.empty();
-    if (myName_.empty()) {
-        return;
-    }
-    result.mySlot = findName(frame, toPixels(cfg_.allyNames, frame.size()), myName_);
-    if (result.mySlot < 0) {
-        return;
-    }
 
-    // Your column is laid out like an enemy's, on the other side of the screen.
-    const auto slot = static_cast<size_t>(result.mySlot);
-    const std::vector<cv::Rect> columns = toPixels(mirrored(cfg_.enemyRows), frame.size());
-    const std::vector<cv::Rect> portraits = toPixels(mirrored(cfg_.enemyPortraits), frame.size());
-    if (slot >= columns.size()) {
+    const HeroVerdict look = abilityBar_.recognize(frame, myHeroId_);
+    if (look.accepted) {
+        myHeroId_ = look.id;
+    }
+    result.myHeroId = myHeroId_;
+    const auto byHero = std::ranges::find(result.allies, myHeroId_, &EnemyPlayer::heroId);
+
+    // The HUD knows best. The nickname is for when it says nothing, such as a hero whose portrait
+    // cannot be recognised in its column.
+    if (!myHeroId_.empty() && byHero != result.allies.end()) {
+        result.mySlot = byHero->slot;
+    } else if (!myName_.empty()) {
+        result.mySlot = findName(frame, toPixels(cfg_.allyNames, frame.size()), myName_);
+    }
+    const auto me = std::ranges::find(result.allies, result.mySlot, &EnemyPlayer::slot);
+    if (result.mySlot < 0 || me == result.allies.end()) {
+        result.mySlot = -1;
         return;
     }
-    std::vector<Detection> mine = vision_.scan(frame, {columns[slot]});
-    for (auto& d : mine) {
-        d.slot = 0;
-        input.owned.insert(d.itemId);
-        result.mySouls += counters_.costOf(d.itemId);
+    result.me = *me;
+    result.me.tips.clear();  // how to play against your own items is no use to you
+    result.me.avoid.clear();
+    for (const auto& id : result.me.itemIds) {
+        input.owned.insert(id);
+        result.mySouls += counters_.costOf(id);
     }
-    if (slot < portraits.size()) {
-        if (const HeroVerdict v = heroes_.recognize(frame, portraits[slot]); v.accepted) {
-            mine.push_back({v.id, v.box, v.score, 0, true});
+}
+
+int AnalysisWorker::itemSouls(const std::vector<EnemyPlayer>& team) const
+{
+    int souls = 0;
+    for (const auto& p : team) {
+        for (const auto& id : p.itemIds) {
+            souls += counters_.costOf(id);
         }
     }
-    SuggestInput notForSuggestions;
-    const std::vector<EnemyPlayer> described =
-        describePlayers(mine, 1, counters_, {cfg_.archetypeShare, cfg_.archetypeMinItems}, notForSuggestions);
-    if (!described.empty()) {
-        result.me = described.front();
-        result.me.tips.clear();  // how to play against your own items is no use to you
-        result.me.avoid.clear();
-    }
+    return souls;
 }
 
 void AnalysisWorker::publishConfig(std::string summary)
@@ -394,24 +399,43 @@ AnalysisResult AnalysisWorker::analyze(bool debug)
     const std::vector<cv::Rect> rows = toPixels(cfg_.enemyRows, frame->size());
     const std::vector<cv::Rect> portraits = toPixels(cfg_.enemyPortraits, frame->size());
 
-    // Search the bounding box of all rows once, then attribute each hit to the row it sits in.
     const cv::Rect searchArea = boundingBox(rows);
 
-    std::vector<Detection> detections = rows.size() > 1 ? vision_.scan(*frame, rows) : vision_.detect(*frame, searchArea);
-    assignToRows(detections, rows);
-
-    const std::vector<HeroVerdict> verdicts = addHeroes(heroes_, *frame, portraits, rows.size(), detections);
+    // Both teams, added to what earlier looks saw. With a single search area there are no columns to
+    // remember things by.
+    std::vector<HeroVerdict> verdicts;
+    std::vector<Detection> detections;
+    std::vector<Detection> allyDetections;
+    if (rows.size() > 1) {
+        const std::map<int, std::string> expected = memory_.heroes();
+        for (auto& d : memory_.update(scanBoard(*frame, vision_, heroes_, cfg_, &verdicts, &expected))) {
+            if (static_cast<size_t>(d.slot) >= rows.size()) {
+                d.slot -= static_cast<int>(rows.size());
+                allyDetections.push_back(std::move(d));
+            } else {
+                detections.push_back(std::move(d));
+            }
+        }
+    } else {
+        detections = vision_.detect(*frame, searchArea);
+        assignToRows(detections, rows);
+    }
 
     if (vision_.templateCount() == 0) {
         result.warning = "no item icons: run tools/fetch_icons.py";
-    } else if (heroes_.heroCount() == 0 && !portraits.empty()) {
-        result.warning = "no hero portraits: run tools/fetch_heroes.py";
+    } else if ((heroes_.heroCount() == 0 && !portraits.empty()) || abilityBar_.heroCount() == 0) {
+        result.warning = "no hero art: run tools/fetch_heroes.py";
     }
+
+    const ArchetypeRule archetypes{cfg_.archetypeShare, cfg_.archetypeMinItems};
+    SuggestInput notForSuggestions;
+    result.allies = describePlayers(allyDetections, rows.size(), counters_, archetypes, notForSuggestions);
 
     SuggestInput input;
     addMe(*frame, result, input);
-    result.players = describePlayers(detections, rows.size(), counters_,
-                                     {cfg_.archetypeShare, cfg_.archetypeMinItems}, input);
+    result.players = describePlayers(detections, rows.size(), counters_, archetypes, input);
+    result.enemyItemSouls = itemSouls(result.players);
+    result.allyItemSouls = itemSouls(result.allies);
     for (const auto& [id, n] : input.items) {
         result.enemyItems.push_back({id, counters_.displayName(id), n});
     }
@@ -421,12 +445,7 @@ AnalysisResult AnalysisWorker::analyze(bool debug)
     // How far along you are: your own items, or if unknown what the average enemy owns.
     input.spentSouls = result.mySlot >= 0 ? result.mySouls : 0;
     if (result.mySlot < 0 && !result.players.empty()) {
-        for (const auto& p : result.players) {
-            for (const auto& id : p.itemIds) {
-                input.spentSouls += counters_.costOf(id);
-            }
-        }
-        input.spentSouls /= static_cast<int>(result.players.size());
+        input.spentSouls = result.enemyItemSouls / static_cast<int>(result.players.size());
     }
     result.suggestions = counters_.suggest(input, static_cast<size_t>(cfg_.maxSuggestions));
     result.elapsedMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
@@ -440,12 +459,22 @@ AnalysisResult AnalysisWorker::analyze(bool debug)
 
     if (debug) {
         saveDebugImages(*frame, searchArea, rows, portraits, detections);
+        const HeroVerdict bar = abilityBar_.recognize(*frame);
+        std::cout << std::format("[debug] you, by your abilities: {} {:.3f}, next {:.3f}: {}; ability icons {}\n",
+                                 bar.id.empty() ? "?" : bar.id, bar.score, bar.runnerUp,
+                                 bar.accepted ? "recognised" : "rejected", abilityBar_.heroCount());
+        double nameScore = 0.0;
+        const int nameSlot = findName(*frame, toPixels(cfg_.allyNames, frame->size()), myName_, &nameScore);
+        std::cout << std::format("[debug] you, by your nickname: column {}, score {:.3f}; in use: column {}\n", nameSlot,
+                                 nameScore, result.mySlot);
         for (size_t i = 0; i < verdicts.size(); ++i) {
             const HeroVerdict& v = verdicts[i];
-            std::cout << std::format("[debug] enemy #{}: {} {:.3f}, next {:.3f}: {}\n", i + 1, v.id.empty() ? "?" : v.id,
-                                     v.score, v.runnerUp, v.accepted ? "recognised" : "rejected");
+            std::cout << std::format("[debug] {} #{}: {} {:.3f}, next {:.3f}: {}\n", i < rows.size() ? "enemy" : "ally",
+                                     i % rows.size() + 1, v.id.empty() ? "?" : v.id, v.score, v.runnerUp,
+                                     v.accepted ? "recognised" : "rejected");
         }
     }
+    detections.insert(detections.end(), allyDetections.begin(), allyDetections.end());
     result.detections = std::move(detections);
     return result;
 }

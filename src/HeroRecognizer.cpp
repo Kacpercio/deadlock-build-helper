@@ -70,6 +70,7 @@ HeroRecognizer::Variant HeroRecognizer::makeVariant(const cv::Mat& image, const 
 size_t HeroRecognizer::loadTemplates(const fs::path& dir, const std::set<std::string>& known)
 {
     heroes_.clear();
+    lastVariant_.clear();
     std::map<std::string, std::vector<Variant>> byId;
 
     for (const auto& file : readTemplateFolder(dir)) {
@@ -103,21 +104,74 @@ size_t HeroRecognizer::loadTemplates(const fs::path& dir, const std::set<std::st
     return heroes_.size();
 }
 
-HeroVerdict HeroRecognizer::recognize(const cv::Mat& frameBgr, cv::Rect box) const
+HeroRecognizer::Search HeroRecognizer::prepareSearch(const cv::Mat& frameBgr, cv::Rect box) const
 {
     // The box grows and shrinks with the HUD, like what it holds.
     box.width = static_cast<int>(std::lround(box.width * cfg_.iconScale));
     box.height = static_cast<int>(std::lround(box.height * cfg_.iconScale));
     box &= cv::Rect(0, 0, frameBgr.cols, frameBgr.rows);
-    if (box.empty() || heroes_.empty()) {
+    Search search{box, static_cast<double>(cfg_.referenceHeight) / (frameBgr.rows * cfg_.iconScale), {}};
+    if (!box.empty()) {
+        // Templates are fixed at reference_height, so bring the search area to that size instead.
+        cv::resize(frameBgr(box), search.image, {}, search.toReference, search.toReference,
+                   search.toReference < 1.0 ? cv::INTER_AREA : cv::INTER_LINEAR);
+    }
+    return search;
+}
+
+void HeroRecognizer::bestOf(const Hero& hero, size_t first, size_t last, const Search& search, double& score,
+                            cv::Rect& box, size_t& variant) const
+{
+    cv::Mat response;
+    for (size_t v = first; v <= last; ++v) {
+        const Variant& t = hero.variants[v];
+        if (t.color.empty() || t.color.cols > search.image.cols || t.color.rows > search.image.rows) {
+            continue;
+        }
+        matchNormed(search.image, t.color, t.colorMask, response);
+        double s = 0.0;
+        cv::Point loc;
+        cv::minMaxLoc(response, nullptr, &s, nullptr, &loc);
+        if (s > score) {
+            score = s;
+            variant = v;
+            box = cv::Rect(search.box.x + static_cast<int>(loc.x / search.toReference),
+                           search.box.y + static_cast<int>(loc.y / search.toReference),
+                           static_cast<int>(t.color.cols / search.toReference),
+                           static_cast<int>(t.color.rows / search.toReference));
+        }
+    }
+}
+
+HeroVerdict HeroRecognizer::confirm(const cv::Mat& frameBgr, cv::Rect box, const std::string& id) const
+{
+    const auto hero = std::ranges::find(heroes_, id, &Hero::id);
+    const auto known = lastVariant_.find(id);
+    if (hero == heroes_.end() || known == lastVariant_.end()) {
         return {};
     }
+    const Search search = prepareSearch(frameBgr, box);
+    if (search.image.empty()) {
+        return {};
+    }
+    HeroVerdict verdict;
+    verdict.id = id;
+    const size_t first = known->second > 0 ? known->second - 1 : 0;
+    const size_t last = std::min(known->second + 1, hero->variants.size() - 1);
+    size_t variant = known->second;
+    bestOf(*hero, first, last, search, verdict.score, verdict.box, variant);
+    verdict.accepted = verdict.score >= cfg_.threshold;
+    return verdict;
+}
 
-    // Templates are fixed at reference_height, so bring the search area to that size instead.
-    const double toReference = static_cast<double>(cfg_.referenceHeight) / (frameBgr.rows * cfg_.iconScale);
-    cv::Mat search, coarseSearch;
-    cv::resize(frameBgr(box), search, {}, toReference, toReference, toReference < 1.0 ? cv::INTER_AREA : cv::INTER_LINEAR);
-    cv::cvtColor(search, coarseSearch, cv::COLOR_BGR2GRAY);
+HeroVerdict HeroRecognizer::recognize(const cv::Mat& frameBgr, cv::Rect box) const
+{
+    const Search search = prepareSearch(frameBgr, box);
+    if (search.image.empty() || heroes_.empty()) {
+        return {};
+    }
+    cv::Mat coarseSearch;
+    cv::cvtColor(search.image, coarseSearch, cv::COLOR_BGR2GRAY);
     cv::resize(coarseSearch, coarseSearch, {}, 0.5, 0.5, cv::INTER_AREA);
 
     // First pass: best coarse score and variant of every hero.
@@ -151,7 +205,7 @@ HeroVerdict HeroRecognizer::recognize(const cv::Mat& frameBgr, cv::Rect box) con
 
     // Second pass: the finalists in colour, at the coarse scale and its neighbours.
     HeroVerdict verdict;
-    cv::Mat response;
+    size_t bestVariant = 0;
     for (size_t f = 0; f < finalists; ++f) {
         const Hero& hero = heroes_[order[f]];
         if (coarseScore[order[f]] < 0.0) {
@@ -159,36 +213,24 @@ HeroVerdict HeroRecognizer::recognize(const cv::Mat& frameBgr, cv::Rect box) con
         }
         double heroScore = -1.0;
         cv::Rect heroBox;
+        size_t heroVariant = 0;
         const size_t centre = coarseVariant[order[f]];
-        const size_t first = centre > 0 ? centre - 1 : 0;
-        const size_t last = std::min(centre + 1, hero.variants.size() - 1);
-        for (size_t v = first; v <= last; ++v) {
-            const Variant& t = hero.variants[v];
-            if (t.color.empty() || t.color.cols > search.cols || t.color.rows > search.rows) {
-                continue;
-            }
-            matchNormed(search, t.color, t.colorMask, response);
-            double score = 0.0;
-            cv::Point loc;
-            cv::minMaxLoc(response, nullptr, &score, nullptr, &loc);
-            if (score > heroScore) {
-                heroScore = score;
-                heroBox = cv::Rect(box.x + static_cast<int>(loc.x / toReference),
-                                   box.y + static_cast<int>(loc.y / toReference),
-                                   static_cast<int>(t.color.cols / toReference),
-                                   static_cast<int>(t.color.rows / toReference));
-            }
-        }
+        bestOf(hero, centre > 0 ? centre - 1 : 0, std::min(centre + 1, hero.variants.size() - 1), search, heroScore,
+               heroBox, heroVariant);
         if (heroScore > verdict.score) {
             verdict.runnerUp = verdict.score;
             verdict.score = heroScore;
             verdict.id = hero.id;
             verdict.box = heroBox;
+            bestVariant = heroVariant;
         } else if (heroScore > verdict.runnerUp) {
             verdict.runnerUp = heroScore;
         }
     }
 
     verdict.accepted = verdict.score >= cfg_.threshold && verdict.score - verdict.runnerUp >= cfg_.margin;
+    if (verdict.accepted) {
+        lastVariant_[verdict.id] = bestVariant;
+    }
     return verdict;
 }

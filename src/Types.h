@@ -65,8 +65,13 @@ struct AnalysisResult {
     std::string error;
     std::string warning;        // the scan ran, but something it needs is missing
 
-    // You, found by your nickname; only with a nickname picked in the menu.
+    // You: your HUD says which hero you play, or else the nickname you picked in the menu says where you are.
     bool nicknameSet = false;
+    std::vector<EnemyPlayer> allies;       // your team, in the same form as `players`
+    int enemyItemSouls = 0;     // what the items recognised on each team cost
+    int allyItemSouls = 0;
+
+    std::string myHeroId;       // from your HUD; empty if not recognised
     int mySlot = -1;            // your column on your team, -1 = not found on the scoreboard
     EnemyPlayer me;             // what is on that column; what you own is left out of the suggestions
     int mySouls = 0;            // what your items cost

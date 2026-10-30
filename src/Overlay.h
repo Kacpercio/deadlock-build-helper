@@ -25,6 +25,7 @@ struct OverlayModel {
     std::string revision;      // changes whenever the content below does; nothing is redrawn otherwise
     PanelModel panel;
     std::optional<Suggestion> reminder;  // a note about the next purchase, when the panel is not up
+    std::optional<MiniModel> mini;       // the small summary, when nothing else is up
     float panelX = 0.02f;  // panel top-left corner, normalized to the monitor
     float panelY = 0.30f;
 
@@ -72,7 +73,7 @@ private:
     bool createDevice();
     bool createRenderTarget();
     void setBounds(const RECT& bounds);
-    RECT panelBounds(const OverlayModel& model) const;
+    RECT panelBounds(const OverlayModel& model, float widthShare, float heightShare) const;
     ImTextureID icon(const std::string& id, bool hero);
     void drawPanelView(const OverlayModel& model);
     void drawCalibration(const OverlayModel& model);

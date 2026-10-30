@@ -13,6 +13,10 @@ namespace {
 constexpr double kNameThreshold = 0.80;
 constexpr double kMinTextBrightness = 120.0;
 constexpr double kTextShareOfBrightest = 0.65;
+constexpr int kMaxTextSaturation = 60;  // nicknames are white; whatever shows through the card rarely is
+
+constexpr int kLooksUntilSold = 4;      // two presses of TAB, at two looks each
+constexpr int kHeroChangesForNewMatch = 3;
 
 void addUnique(std::vector<std::string>& list, const std::string& value)
 {
@@ -72,6 +76,90 @@ void assignToRows(std::vector<Detection>& detections, const std::vector<cv::Rect
     std::erase_if(detections, [](const Detection& d) { return d.slot < 0; });
 }
 
+std::vector<Detection> scanBoard(const cv::Mat& frameBgr, VisionEngine& vision, const HeroRecognizer& heroes,
+                                 const AppConfig& cfg, std::vector<HeroVerdict>* verdicts,
+                                 const std::map<int, std::string>* expectedHeroes)
+{
+    if (cfg.enemyRows.size() < 2) {
+        return {};
+    }
+    std::vector<NormRect> rowBoxes = cfg.enemyRows;
+    const std::vector<NormRect> allyRows = mirrored(cfg.enemyRows);
+    rowBoxes.insert(rowBoxes.end(), allyRows.begin(), allyRows.end());
+    std::vector<NormRect> portraitBoxes = cfg.enemyPortraits;
+    const std::vector<NormRect> allyPortraits = mirrored(cfg.enemyPortraits);
+    portraitBoxes.insert(portraitBoxes.end(), allyPortraits.begin(), allyPortraits.end());
+
+    const std::vector<cv::Rect> rows = toPixels(rowBoxes, frameBgr.size());
+    std::vector<Detection> detections = vision.scan(frameBgr, rows);
+    assignToRows(detections, rows);
+    std::vector<HeroVerdict> looks =
+        addHeroes(heroes, frameBgr, toPixels(portraitBoxes, frameBgr.size()), rows.size(), detections, expectedHeroes);
+    if (verdicts) {
+        *verdicts = std::move(looks);
+    }
+    return detections;
+}
+
+std::map<int, std::string> ScoreboardMemory::heroes() const
+{
+    std::map<int, std::string> known;
+    for (const auto& [slot, column] : columns_) {
+        if (column.hero) {
+            known[slot] = column.hero->itemId;
+        }
+    }
+    return known;
+}
+
+std::vector<Detection> ScoreboardMemory::update(const std::vector<Detection>& scan)
+{
+    std::map<int, const Detection*> heroNow;
+    for (const auto& d : scan) {
+        if (d.isHero) {
+            heroNow[d.slot] = &d;
+        }
+    }
+
+    int changed = 0;
+    for (const auto& [slot, hero] : heroNow) {
+        const auto known = columns_.find(slot);
+        changed += known != columns_.end() && known->second.hero && known->second.hero->itemId != hero->itemId;
+    }
+    if (changed >= kHeroChangesForNewMatch) {
+        columns_.clear();
+    }
+
+    for (const auto& [slot, hero] : heroNow) {
+        Column& column = columns_[slot];
+        if (column.hero && column.hero->itemId != hero->itemId) {
+            column.items.clear();  // somebody else now: their items are not the old hero's
+        }
+        column.hero = *hero;
+        // The hero is in full view, so its items should be as well.
+        for (auto& [id, item] : column.items) {
+            ++item.missed;
+        }
+    }
+    for (const auto& d : scan) {
+        if (!d.isHero) {
+            columns_[d.slot].items[d.itemId] = {d, 0};
+        }
+    }
+
+    std::vector<Detection> known;
+    for (auto& [slot, column] : columns_) {
+        std::erase_if(column.items, [](const auto& entry) { return entry.second.missed >= kLooksUntilSold; });
+        if (column.hero) {
+            known.push_back(*column.hero);
+        }
+        for (const auto& [id, item] : column.items) {
+            known.push_back(item.detection);
+        }
+    }
+    return known;
+}
+
 std::vector<NormRect> mirrored(std::vector<NormRect> boxes)
 {
     for (auto& b : boxes) {
@@ -94,6 +182,11 @@ NameTemplate makeNameTemplate(const cv::Mat& frameBgr, cv::Rect box)
     cv::minMaxLoc(gray, nullptr, &brightest);
     cv::Mat text;
     cv::threshold(gray, text, std::max(kMinTextBrightness, brightest * kTextShareOfBrightest), 255, cv::THRESH_BINARY);
+    cv::Mat hsv;
+    cv::cvtColor(frameBgr(box), hsv, cv::COLOR_BGR2HSV);
+    cv::Mat pale;
+    cv::extractChannel(hsv, pale, 1);
+    text.setTo(0, pale > kMaxTextSaturation);
     if (cv::countNonZero(text) == 0) {
         return {};
     }
@@ -151,11 +244,17 @@ int findName(const cv::Mat& frameBgr, const std::vector<cv::Rect>& boxes, const 
 
 std::vector<HeroVerdict> addHeroes(const HeroRecognizer& heroes, const cv::Mat& frameBgr,
                                    const std::vector<cv::Rect>& portraits, size_t rowCount,
-                                   std::vector<Detection>& detections)
+                                   std::vector<Detection>& detections, const std::map<int, std::string>* expected)
 {
     std::vector<HeroVerdict> verdicts;
     for (size_t i = 0; i < portraits.size() && i < rowCount; ++i) {
-        verdicts.push_back(heroes.recognize(frameBgr, portraits[i]));
+        HeroVerdict look;
+        if (expected) {
+            if (const auto known = expected->find(static_cast<int>(i)); known != expected->end()) {
+                look = heroes.confirm(frameBgr, portraits[i], known->second);
+            }
+        }
+        verdicts.push_back(look.accepted ? look : heroes.recognize(frameBgr, portraits[i]));
         const HeroVerdict& v = verdicts.back();
         if (v.accepted) {
             detections.push_back({v.id, v.box, v.score, static_cast<int>(i), true});

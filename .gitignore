@@ -22,6 +22,7 @@ debug_*.png
 /assets/templates/*.png
 /assets/heroes/*.png
 /assets/icons/
+/assets/abilities/
 
 # Python
 __pycache__/

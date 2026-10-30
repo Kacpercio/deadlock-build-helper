@@ -112,10 +112,11 @@ std::string statusLine(const AnalysisResult& r, bool busy)
 }
 
 constexpr int kReminderSeconds = 8;
+constexpr size_t kMiniItems = 3;
 
 std::string aboutYou(const AnalysisResult& r)
 {
-    if (!r.nicknameSet || r.version == 0) {
+    if (r.version == 0) {
         return {};
     }
     if (r.mySlot < 0) {
@@ -175,7 +176,8 @@ int main()
     std::string notice;
     Clock::time_point noticeUntil{};
 
-    KeyEdge scoreboardKey, debugKey, reloadKey, calibrateKey, tuneKey, pinKey, menuKey;
+    KeyEdge scoreboardKey, debugKey, reloadKey, calibrateKey, tuneKey, pinKey, menuKey, miniKey;
+    Clock::time_point lastResultAt{};
     bool pinned = false;
 
     SettingsMenu menu;
@@ -277,6 +279,10 @@ int main()
         if (pinKey.pressed(gameFocused && keyDown(cfg.hotkeys.pinPanel))) {
             pinned = !pinned;
         }
+        if (miniKey.pressed(gameFocused && keyDown(cfg.hotkeys.miniPanel))) {
+            cfg.miniPanel = !cfg.miniPanel;
+            worker.requestSettings(cfg);
+        }
 
         // Edge of the key itself: while a new hotkey is being chosen it must not count as "pressed" later.
         if (menuKey.pressed(keyDown(cfg.hotkeys.menu))) {
@@ -314,6 +320,7 @@ int main()
                 purchases = newPurchases(playersAtLastPress, shown.players);
             }
             pickedSlot.reset();
+            lastResultAt = now;
 
             // The next reminder counts from now, and they stop once scans have stopped for a while:
             // the match is probably over.
@@ -367,6 +374,20 @@ int main()
                                          model.panel.status);
         } else if (model.reminder) {
             model.revision = "reminder " + model.reminder->item;
+        } else if (gameFocused && !calibrating && cfg.miniPanel) {
+            MiniModel mini;
+            mini.scanned = shown.version > 0;
+            mini.yourTeamSouls = shown.allyItemSouls;
+            mini.enemySouls = shown.enemyItemSouls;
+            const auto minutes = std::chrono::duration_cast<std::chrono::minutes>(now - lastResultAt).count();
+            mini.age = minutes == 0 ? "now" : std::format("{} min ago", minutes);
+            for (const auto& s : shown.suggestions) {
+                if (mini.next.size() < kMiniItems) {
+                    mini.next.push_back(s);
+                }
+            }
+            model.revision = std::format("mini {} {} {}", shown.version, mini.age, configVersion);
+            model.mini = std::move(mini);
             model.panelX = static_cast<float>(cfg.panelX);
             model.panelY = static_cast<float>(cfg.panelY);
         }

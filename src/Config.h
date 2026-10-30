@@ -21,15 +21,17 @@ struct Hotkeys {
     int tuneScale = 0x75;   // VK_F6
     int pinPanel = 0x74;    // VK_F5
     int menu = 0x79;        // VK_F10
+    int miniPanel = 0x73;   // VK_F4
 };
 
 struct AppConfig {
     std::string gameWindowTitle = "Deadlock";
     int monitorIndex = 0;
-    int captureDelayMs = 120;      // let the scoreboard fade in before grabbing a frame
+    int captureDelayMs = 150;      // let the scoreboard fade in before grabbing a frame
     int rescanDelayMs = 300;       // a second, surer look that much later, if the key is still held
     int panelHoldMs = 5000;        // the panel stays this long after the key is released
     int reminderMinutes = 3;       // nudge about the next purchase this long after a scan; 0 = never
+    bool miniPanel = true;         // a small summary on screen all the time, not just on TAB
     int calibrationScanMs = 400;   // live rescan interval while calibrating
     int scanThreads = 2;           // CPU threads a scan may use; every extra one is taken from the game
     Hotkeys hotkeys;

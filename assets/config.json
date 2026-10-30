@@ -3,11 +3,14 @@
   "monitor_index": 0,
   // TAB: first look at the scoreboard after capture_delay_ms, a second look rescan_delay_ms later if
   // TAB is still down (the first can catch it fading in). The panel stays panel_hold_ms after release.
-  "capture_delay_ms": 120,
+  "capture_delay_ms": 150,
   "rescan_delay_ms": 300,
   "panel_hold_ms": 5000,
   // Reminds you of the next purchase this many minutes after a scan. 0 = no reminders.
   "reminder_minutes": 3,
+  // A small summary on screen all the time, from the last scan: how your team's items compare with
+  // the enemy's, and what to buy next. It keeps a window over the game, which can cost some FPS.
+  "mini_panel": true,
   "calibration_scan_ms": 400,
   // CPU threads a scan may use. More makes the scan quicker, but takes them from the game.
   "scan_threads": 2,
@@ -21,7 +24,8 @@
     "debug_dump": "F9",
     "tune_scale": "F6",
     "pin_panel": "F5",
-    "menu": "F10"
+    "menu": "F10",
+    "mini_panel": "F4"
   },
 
   "template_dir": "assets/templates",

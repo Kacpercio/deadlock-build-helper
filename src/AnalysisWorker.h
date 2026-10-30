@@ -1,5 +1,6 @@
 #pragma once
 
+#include "AbilityBar.h"
 #include "Config.h"
 #include "CounterDatabase.h"
 #include "HeroRecognizer.h"
@@ -76,6 +77,7 @@ private:
     void pickMe(int allySlot);
     void learnIcon(const std::string& itemId, cv::Rect box);
     void addMe(const cv::Mat& frame, AnalysisResult& result, SuggestInput& input);
+    int itemSouls(const std::vector<EnemyPlayer>& team) const;
     void saveDebugImages(cv::Mat& frame, const cv::Rect& searchArea, const std::vector<cv::Rect>& rows,
                          const std::vector<cv::Rect>& portraits, const std::vector<Detection>& detections) const;
 
@@ -88,7 +90,10 @@ private:
     VisionEngine vision_;    // item icons
     HeroRecognizer heroes_;  // hero portraits
     CounterDatabase counters_;
+    AbilityBar abilityBar_;
+    std::string myHeroId_;  // kept while the ability bar is hidden or under an effect
     NameTemplate myName_;
+    ScoreboardMemory memory_;
     cv::Mat lastPreview_;
     cv::Size lastFrameSize_;
 
