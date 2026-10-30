@@ -23,6 +23,23 @@ constexpr double kOverlapIou = 0.3;
 // many pixels around its spot that check looks.
 constexpr double kCoarseAllowance = 0.20;
 constexpr int kConfirmSlack = 3;
+constexpr int kCoarsePeaks = 2;  // small, plain icons can peak somewhere else first
+
+// An active item on the scoreboard: a disc, its bottom covered by a label such as "ACTIVE".
+constexpr double kActiveLabelStart = 0.72;
+
+// The label holds text, so its brightest pixels stand out from the rest. A hit without any is dark
+// art finding a dark patch of the game world. Measured: the real one 99, wrong ones at most 35.
+constexpr double kMinLabelContrast = 50.0;
+
+bool showsActiveLabel(const cv::Mat& iconBgr)
+{
+    cv::Mat label;
+    cv::cvtColor(iconBgr.rowRange(static_cast<int>(iconBgr.rows * kActiveLabelStart), iconBgr.rows), label, cv::COLOR_BGR2GRAY);
+    double brightest = 0.0;
+    cv::minMaxLoc(label, nullptr, &brightest);
+    return brightest - cv::mean(label)[0] >= kMinLabelContrast;
+}
 
 double iou(const cv::Rect& a, const cv::Rect& b)
 {
@@ -140,9 +157,20 @@ size_t VisionEngine::loadTemplates(const fs::path& dir)
     templates_.clear();
     scaledForHeight_ = 0;
     for (auto& file : readTemplateFolder(dir)) {
-        templates_.push_back({std::move(file.id), std::move(file.image), std::move(file.mask), {}, {}, {}, {}});
+        templates_.push_back({std::move(file.id), std::move(file.image), std::move(file.mask), {}, {}, {}, {}, false});
     }
     return templates_.size();
+}
+
+size_t VisionEngine::addActiveItems(const fs::path& dir)
+{
+    scaledForHeight_ = 0;
+    size_t added = 0;
+    for (auto& file : readTemplateFolder(dir)) {
+        templates_.push_back({std::move(file.id), std::move(file.image), std::move(file.mask), {}, {}, {}, {}, true});
+        ++added;
+    }
+    return added;
 }
 
 void VisionEngine::prepareTemplates(int frameHeight)
@@ -163,7 +191,7 @@ void VisionEngine::prepareTemplates(int frameHeight)
         cv::resize(t.original, t.scaled, size, 0, 0, scale < 1.0 ? cv::INTER_AREA : cv::INTER_LINEAR);
 
         t.scaledMask.release();
-        if (!t.originalMask.empty() || cfg_.cornerMask > 0.0) {
+        if (!t.originalMask.empty() || cfg_.cornerMask > 0.0 || t.activeLook) {
             cv::Mat mask(size, CV_8U, cv::Scalar(255));
             if (!t.originalMask.empty()) {
                 cv::resize(t.originalMask, mask, size, 0, 0, cv::INTER_NEAREST);
@@ -174,6 +202,12 @@ void VisionEngine::prepareTemplates(int frameHeight)
                                                     {w, 0},
                                                     {w, static_cast<int>(h * cfg_.cornerMask)}};
                 cv::fillConvexPoly(mask, corner, cv::Scalar(0));
+            }
+            if (t.activeLook) {
+                cv::Mat disc(size, CV_8U, cv::Scalar(0));
+                cv::circle(disc, {size.width / 2, size.height / 2}, std::min(size.width, size.height) / 2, cv::Scalar(255), cv::FILLED);
+                disc.rowRange(static_cast<int>(size.height * kActiveLabelStart), size.height).setTo(0);
+                cv::bitwise_and(mask, disc, mask);
             }
             t.scaledMask = mask;
         }
@@ -254,7 +288,8 @@ std::vector<Detection> VisionEngine::detect(const cv::Mat& frameBgr, cv::Rect ro
         cv::Mat response;
         for (int i = range.start; i < range.end; ++i) {
             const Template& t = templates_[i];
-            if (t.scaled.empty() || t.scaled.cols > search.cols || t.scaled.rows > search.rows) {
+            // Active items' art needs the check scan() does: this search is for plain icons.
+            if (t.activeLook || t.scaled.empty() || t.scaled.cols > search.cols || t.scaled.rows > search.rows) {
                 continue;
             }
             matchNormed(search, t.scaled, t.scaledMask, response);
@@ -298,7 +333,7 @@ std::vector<Detection> VisionEngine::scan(const cv::Mat& frameBgr, const std::ve
     const int total = static_cast<int>(templates_.size() * prepared.size());
     std::vector<std::optional<Detection>> hits(static_cast<size_t>(total));
     cv::parallel_for_(cv::Range(0, total), [&](const cv::Range& range) {
-        cv::Mat response;
+        cv::Mat response, coarseResponse;
         for (int n = range.start; n < range.end; ++n) {
             const Template& t = templates_[static_cast<size_t>(n) % templates_.size()];
             const Column& column = prepared[static_cast<size_t>(n) / templates_.size()];
@@ -307,32 +342,40 @@ std::vector<Detection> VisionEngine::scan(const cv::Mat& frameBgr, const std::ve
                 continue;
             }
 
-            matchNormed(column.coarse, t.coarse, t.coarseMask, response);
-            double coarseScore = 0.0;
-            cv::Point coarseAt;
-            cv::minMaxLoc(response, nullptr, &coarseScore, nullptr, &coarseAt);
-            if (coarseScore < cfg_.threshold - kCoarseAllowance) {
-                continue;
-            }
+            matchNormed(column.coarse, t.coarse, t.coarseMask, coarseResponse);
+            for (int peak = 0; peak < kCoarsePeaks; ++peak) {
+                double coarseScore = 0.0;
+                cv::Point coarseAt;
+                cv::minMaxLoc(coarseResponse, nullptr, &coarseScore, nullptr, &coarseAt);
+                if (coarseScore < cfg_.threshold - kCoarseAllowance) {
+                    break;
+                }
+                // The next peak must be somewhere else.
+                coarseResponse(cv::Rect(coarseAt.x - t.coarse.cols / 2, coarseAt.y - t.coarse.rows / 2, t.coarse.cols, t.coarse.rows) &
+                               cv::Rect(0, 0, coarseResponse.cols, coarseResponse.rows))
+                    .setTo(-1.0);
 
-            const cv::Rect window = cv::Rect(coarseAt.x * 2 - kConfirmSlack, coarseAt.y * 2 - kConfirmSlack,
-                                             t.scaled.cols + 2 * kConfirmSlack, t.scaled.rows + 2 * kConfirmSlack) &
-                                    cv::Rect(0, 0, column.search.cols, column.search.rows);
-            if (window.width < t.scaled.cols || window.height < t.scaled.rows) {
-                continue;
-            }
-            matchNormed(column.search(window), t.scaled, t.scaledMask, response);
-            double score = 0.0;
-            cv::Point at;
-            cv::minMaxLoc(response, nullptr, &score, nullptr, &at);
-            if (score >= cfg_.threshold) {
-                hits[static_cast<size_t>(n)] = Detection{
-                    t.id,
-                    cv::Rect(column.box.x + static_cast<int>((window.x + at.x) * toFrame),
-                             column.box.y + static_cast<int>((window.y + at.y) * toFrame),
-                             static_cast<int>(t.scaled.cols * toFrame), static_cast<int>(t.scaled.rows * toFrame)),
-                    score,
-                };
+                const cv::Rect window = cv::Rect(coarseAt.x * 2 - kConfirmSlack, coarseAt.y * 2 - kConfirmSlack,
+                                                 t.scaled.cols + 2 * kConfirmSlack, t.scaled.rows + 2 * kConfirmSlack) &
+                                        cv::Rect(0, 0, column.search.cols, column.search.rows);
+                if (window.width < t.scaled.cols || window.height < t.scaled.rows) {
+                    continue;
+                }
+                matchNormed(column.search(window), t.scaled, t.scaledMask, response);
+                double score = 0.0;
+                cv::Point at;
+                cv::minMaxLoc(response, nullptr, &score, nullptr, &at);
+                const cv::Rect icon(window.x + at.x, window.y + at.y, t.scaled.cols, t.scaled.rows);
+                if (score >= cfg_.threshold && (!t.activeLook || showsActiveLabel(column.search(icon))) &&
+                    (!hits[static_cast<size_t>(n)] || score > hits[static_cast<size_t>(n)]->score)) {
+                    hits[static_cast<size_t>(n)] = Detection{
+                        t.id,
+                        cv::Rect(column.box.x + static_cast<int>((window.x + at.x) * toFrame),
+                                 column.box.y + static_cast<int>((window.y + at.y) * toFrame),
+                                 static_cast<int>(t.scaled.cols * toFrame), static_cast<int>(t.scaled.rows * toFrame)),
+                        score,
+                    };
+                }
             }
         }
     });

@@ -73,7 +73,7 @@ int main(int, char** argv)
         CHECK(near(l.config.enemyPortraits[2].y, 0.0));
         CHECK(near(l.config.enemyPortraits[0].w, 0.0417));
         CHECK(near(l.config.downscale, 1.0));
-        CHECK(near(l.config.matchThreshold, 0.90));
+        CHECK(near(l.config.matchThreshold, 0.85));
         CHECK(l.config.itemIconSize == 27);
         CHECK(near(l.config.itemCornerMask, 0.5));
         CHECK(near(l.config.heroThreshold, 0.80));

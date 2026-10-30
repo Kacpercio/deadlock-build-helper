@@ -72,6 +72,7 @@ struct AnalysisResult {
     int allyItemSouls = 0;
 
     std::string myHeroId;       // from your HUD; empty if not recognised
+    std::string howFound;       // what the HUD and the nickname each said, to tell a wrong answer's cause
     int mySlot = -1;            // your column on your team, -1 = not found on the scoreboard
     EnemyPlayer me;             // what is on that column; what you own is left out of the suggestions
     int mySouls = 0;            // what your items cost

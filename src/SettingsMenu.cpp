@@ -171,19 +171,25 @@ void SettingsMenu::drawScoreboard(const MenuContext& context, MenuActions& actio
         return;
     }
     if (context.justPicked) {
-        ImGui::TextWrapped(context.nicknameSet ? "Saved. It is used from the next scan on, when your HUD does not tell." : "Nickname forgotten.");
+        ImGui::TextWrapped(context.nicknameSet ? "Saved. It is used from the next scan on." : "Nickname forgotten.");
     } else if (context.mySlot >= 0) {
         const std::string hero = context.myHero.empty() ? "hero not recognised" : context.myHero;
         ImGui::Text("Found you on the last scan: %s (pink box).", hero.c_str());
     } else {
-        ImGui::TextWrapped("Not found on the last scan. If your hero's portrait is not recognised either, click your "
-                           "nickname among the green boxes: that is the fallback.");
+        ImGui::TextWrapped("Not found on the last scan. Click your nickname among the green boxes.");
     }
     if (context.nicknameSet) {
         ImGui::SameLine();
         if (ImGui::SmallButton("Forget")) {
             actions.pickMe = -1;
         }
+    }
+    if (!context.howFound.empty()) {
+        ImGui::TextDisabled("%s", context.howFound.c_str());
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Save this scan as a picture")) {
+        actions.saveScan = true;
     }
 
     // The scoreboard, with the boxes the helper reads on top of it.
@@ -231,8 +237,7 @@ void SettingsMenu::drawScoreboard(const MenuContext& context, MenuActions& actio
 void SettingsMenu::drawIconTeacher(const MenuContext& context, MenuActions& actions)
 {
     heading("Teach an icon");
-    ImGui::TextWrapped("Active items look different on the scoreboard, so they have to be taught once. "
-                       "Click an icon that has no name in the panel, then pick its name.");
+    ImGui::TextWrapped("If an item you can see is not recognised, click it here and pick its name.");
     if (!context.preview || edited_.enemyRows.empty() || !context.itemNames) {
         return;
     }

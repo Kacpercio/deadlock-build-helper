@@ -33,7 +33,8 @@
 
   // Screen height (px) that the sizes below and your own template crops refer to.
   "reference_height": 1080,
-  "match_threshold": 0.90,
+  // Real icons score 0.93 or more on a real scoreboard; the best wrong item 0.77.
+  "match_threshold": 0.85,
   // 1.0 = search at full resolution. The scoreboard icons are only 27 px tall at 1080p, and
   // shrinking them further (e.g. 0.75) eats most of the matching margin.
   "downscale": 1.0,

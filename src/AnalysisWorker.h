@@ -54,6 +54,9 @@ public:
     void requestSettings(AppConfig settings);
     void requestResetSettings();
 
+    // Saves the frame of the last scan as debug_last_scan.png next to the exe.
+    void requestSaveLastScan();
+
     // Remembers the nickname in this column of your team on the last scan as yours. -1 forgets it.
     void requestPickMe(int allySlot);
 
@@ -76,6 +79,8 @@ private:
     void applyThreadLimit() const;
     void pickMe(int allySlot);
     void learnIcon(const std::string& itemId, cv::Rect box);
+    void saveLastScan();
+    void loadItemTemplates(VisionEngine& vision) const;
     void addMe(const cv::Mat& frame, AnalysisResult& result, SuggestInput& input);
     int itemSouls(const std::vector<EnemyPlayer>& team) const;
     void saveDebugImages(cv::Mat& frame, const cv::Rect& searchArea, const std::vector<cv::Rect>& rows,
@@ -91,11 +96,13 @@ private:
     HeroRecognizer heroes_;  // hero portraits
     CounterDatabase counters_;
     AbilityBar abilityBar_;
-    std::string myHeroId_;  // kept while the ability bar is hidden or under an effect
+    // Where you were last found: kept while nothing says otherwise and that column still has that hero,
+    // for when the ability bar is under an effect.
+    int lastMySlot_ = -1;
+    std::string lastMyHero_;
     NameTemplate myName_;
     ScoreboardMemory memory_;
-    cv::Mat lastPreview_;
-    cv::Size lastFrameSize_;
+    cv::Mat lastFrame_;
 
     std::mutex mutex_;
     std::condition_variable_any wake_;
@@ -104,6 +111,7 @@ private:
     bool pendingReload_ = false;
     bool pendingTune_ = false;
     bool pendingPrepare_ = false;
+    bool pendingSaveScan_ = false;
     std::optional<AppConfig> pendingSettings_;
     bool pendingResetSettings_ = false;
     std::optional<int> pendingPick_;

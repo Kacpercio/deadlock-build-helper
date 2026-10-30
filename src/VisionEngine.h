@@ -27,7 +27,7 @@ std::vector<TemplateFile> readTemplateFolder(const std::filesystem::path& dir);
 void matchNormed(const cv::Mat& search, const cv::Mat& templ, const cv::Mat& mask, cv::Mat& response);
 
 struct VisionConfig {
-    double threshold = 0.90;    // TM_CCOEFF_NORMED score needed to count as a hit
+    double threshold = 0.85;    // TM_CCOEFF_NORMED score needed to count as a hit
     double downscale = 1.0;     // search image scale; templates are scaled to match
     int referenceHeight = 1080; // screen height the templates' sizes refer to
     double iconScale = 1.0;     // correction when icons on screen are larger/smaller than expected
@@ -51,6 +51,10 @@ public:
     explicit VisionEngine(VisionConfig cfg);
 
     size_t loadTemplates(const std::filesystem::path& dir);
+
+    // Adds the shop art of active items. The scoreboard draws it round, with a label across the bottom,
+    // so only the part of the art both have in common is compared.
+    size_t addActiveItems(const std::filesystem::path& dir);
 
     size_t templateCount() const { return templates_.size(); }
 
@@ -80,6 +84,7 @@ private:
         cv::Mat scaledMask;    // empty = unmasked (faster) matching
         cv::Mat coarse;        // grey, half size of `scaled`: scan()'s first pass
         cv::Mat coarseMask;
+        bool activeLook = false;  // see addActiveItems()
     };
 
     void prepareTemplates(int frameHeight);

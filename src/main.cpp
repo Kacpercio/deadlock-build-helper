@@ -412,8 +412,9 @@ int main()
             context.justPicked = pickedSlot.has_value();
             context.mySlot = pickedSlot.value_or(shown.mySlot);
             context.myHero = shown.me.hero;
+            context.howFound = shown.howFound;
             context.itemNames = &itemNames;
-            context.notice = now < noticeUntil ? notice : std::string{};
+            context.notice = notice;
             model.menu = [&menu, &menuActions, context] { menuActions = menu.draw(context); };
         }
         overlay.render(model);
@@ -428,6 +429,9 @@ int main()
         if (menuActions.pickMe) {
             worker.requestPickMe(*menuActions.pickMe);
             pickedSlot = *menuActions.pickMe;
+        }
+        if (menuActions.saveScan) {
+            worker.requestSaveLastScan();
         }
         if (menuActions.learnIcon) {
             worker.requestLearnIcon(menuActions.learnIcon->first, menuActions.learnIcon->second);

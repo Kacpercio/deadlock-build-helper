@@ -215,6 +215,56 @@ int main(int, char** argv)
         CHECK(makeNameTemplate(cv::Mat(1080, 1920, CV_8UC3, cv::Scalar(10, 10, 10)), boxes[0]).empty());
     }
 
+    // ---- Active items: the shop art on a disc, with a label across the bottom ------------------
+    {
+        const fs::path passive = tmp / "active_test_passive";
+        const fs::path active = tmp / "active_test_active";
+        fs::create_directories(passive);
+        fs::create_directories(active);
+        std::map<std::string, cv::Mat> art;
+        for (const std::string& id : {std::string("unstoppable"), std::string("metal_skin"), std::string("cold_front")}) {
+            art[id] = makeIcon(rng, categoryColor("spirit"));
+            cv::Mat big;
+            cv::resize(art[id], big, {}, 7.0, 7.0, cv::INTER_CUBIC);
+            cv::imwrite((active / (id + ".png")).string(), big);
+        }
+        cv::imwrite((passive / "health.png").string(), makeIcon(rng, categoryColor("vitality")));
+
+        const auto drawActive = [&](cv::Mat& frame, const std::string& id, cv::Point at) {
+            cv::Mat cell = art.at(id).clone();
+            // Outside the disc: the column behind it. The bottom: a label.
+            cv::Mat outside(cell.size(), CV_8U, cv::Scalar(255));
+            cv::circle(outside, {kIcon / 2, kIcon / 2}, kIcon / 2, cv::Scalar(0), cv::FILLED);
+            cell.setTo(cv::Scalar(25, 25, 30), outside);
+            cell.rowRange(20, kIcon).setTo(cv::Scalar(20, 20, 20));
+            cv::putText(cell, "ACT", {2, 26}, cv::FONT_HERSHEY_PLAIN, 0.6, cv::Scalar(220, 220, 220));
+            // The tier badge.
+            cv::fillConvexPoly(cell, std::vector<cv::Point>{{14, 0}, {26, 0}, {26, 12}}, cv::Scalar(200, 100, 200));
+            cv::GaussianBlur(cell, cell, {0, 0}, kBlur);
+            cell.copyTo(frame(cv::Rect(at, cell.size())));
+        };
+        cv::Mat frame(1080, 1920, CV_8UC3, cv::Scalar(30, 25, 25));
+        const std::vector<cv::Rect> rows = toPixels(cfg.enemyRows, frame.size());
+        drawActive(frame, "unstoppable", rows[0].tl() + cv::Point(kOffsetX, kOffsetY));
+        drawActive(frame, "metal_skin", rows[1].tl() + cv::Point(kOffsetX + kPitch, kOffsetY + kPitch));
+
+        VisionEngine vision(itemVisionConfig(cfg));
+        CHECK(vision.loadTemplates(passive) == 1);
+        CHECK(vision.addActiveItems(active) == 3);
+        CHECK(vision.templateCount() == 4);
+        std::vector<Detection> found = vision.scan(frame, rows);
+        assignToRows(found, rows);
+        std::set<std::string> seen;
+        for (const auto& d : found) seen.insert(std::format("{}/{}", d.slot, d.itemId));
+        CHECK((seen == std::set<std::string>{"0/unstoppable", "1/metal_skin"}));
+
+        // Without their folder they are simply unknown.
+        VisionEngine passiveOnly(itemVisionConfig(cfg));
+        passiveOnly.loadTemplates(passive);
+        CHECK(passiveOnly.scan(frame, rows).empty());
+        CHECK(passiveOnly.addActiveItems(tmp / "does_not_exist") == 0);
+    }
+
     // ---- Which hero you play, from the ability bar ----------------------------------------------
     {
         const fs::path dir = tmp / "abilities";

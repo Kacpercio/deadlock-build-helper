@@ -161,12 +161,9 @@ the left, the enemy team on the right.
    scoreboard shows exactly that artwork; the tier badge it adds in the top-right corner is
    ignored (`item_corner_mask`). The 50 active items' art goes to `assets\icons\`, for the panel's
    pictures. Rebuild once so they are copied next to the exe.
-3. **Active items - crop them once.** The scoreboard draws the 50 active items differently
-   (round, dark, with a localized "ACTIVE"/"AKTYWNY" label), so their shop art does not match.
-   When an enemy owns one, hold TAB, press **F9**, open `debug_roi.png` (next to the exe) in
-   Paint/GIMP, crop the icon tightly and save it as `build\assets\templates\<id>@active.png`.
-   `fetch_icons.py` and `assets\templates\ITEM_IDS.txt` list all ids, e.g. Unstoppable is
-   `unstoppable@active.png`, Healing Rite `health_stimpak@active.png`. Press **F8** to load it.
+3. **Active items** come with the same download. The scoreboard draws their art round, with a localized
+   "ACTIVE"/"AKTYWNY" label across the bottom, so only the part both have in common is compared. If one is
+   still not recognised, teach it in the menu (see "Settings menu").
 4. **Hero portraits - download them:**
    ```powershell
    python tools\fetch_heroes.py
@@ -205,14 +202,13 @@ your last scan, with the boxes the helper reads drawn on it. Changes apply when 
 are saved to `assets\settings.json` next to the exe: only what differs from `config.json`, and they
 survive rebuilds. **Reset to defaults** deletes that file.
 
-**You.** The helper finds you by itself. The ability bar at the bottom of your HUD shows your hero's four
+**You.** The helper finds you by itself, unless you pick your nickname, which then comes first. The ability bar at the bottom of your HUD shows your hero's four
 abilities, and `tools\fetch_heroes.py` downloads what they look like (`assets\abilities`). On two real
 frames (Lash and Venator), also resampled to 720p and 1440p, the right hero scored 0.945-0.975 and the next
 best at most 0.42.
 Your column is then the one with that hero's portrait.
 
-The nickname is the fallback, for when your portrait is not recognised: hold TAB once, open the menu and
-click yours among the green boxes. It is saved as a picture (`assets\my_name.png`) and found in whichever
+To pick it, hold TAB once, open the menu and click yours among the green boxes. It is saved as a picture (`assets\my_name.png`) and found in whichever
 column you are. The panel shows your hero and items, warns about items of yours that do badly
 against these enemies, leaves what you own out of the suggestions, and ranks answers to a threat lower
 when you already own one.
@@ -220,10 +216,9 @@ Pick it again if you change your nickname or resolution. It does not read text, 
 typed nickname would need OCR. On two real frames the nickname scored 0.998 or more, and other text at
 most 0.46.
 
-**Teaching icons.** Active items look different on the scoreboard and cannot be downloaded (their API art
-scored 0.45 on a real icon, below other items). Under "Teach an icon", click one on the enlarged strips and
-pick its name; it is saved as `assets\templates\<id>@active.png` and recognised from then on. Copy these
-into the project's `assets\templates` if you want them to survive deleting `build`.
+**Teaching icons.** If an item you can see is not recognised, click it on the enlarged strips under "Teach
+an icon" and pick its name; it is saved as `assets\templates\<id>@active.png` and recognised from then on.
+Copy these into the project's `assets\templates` if you want them to survive deleting `build`.
 
 ## The small summary
 
@@ -309,7 +304,7 @@ ctest --test-dir build --output-on-failure
 - `logic_tests` (186 checks): config parsing, the measured column layout, value clamping, key
   names, `calibration.json`, the counter database (items, heroes, builds, tips, overrides such
   as "no spirit resist vs Tankbuster"), ranking, and the per-enemy hero / item / build analysis.
-- `vision_tests` (312 checks): Unicode-safe image IO, hero template loading, then synthetic
+- `vision_tests` (318 checks): Unicode-safe image IO, hero template loading, then synthetic
   scoreboards in the real layout (27 px icons two per row in each enemy column, hero art drawn at
   0.25-0.29x from the top of the screen) with templates for all 173 items and 44 heroes, the app's
   masks and thresholds, blur, brightness shift, noise, unknown "distractor" icons, an icon between
@@ -328,9 +323,9 @@ under ThreadSanitizer (the template search runs in parallel).
 | Downloaded API icons only (123 passive), `screenshot_check` | all **8 of 8** passive items found, scores 0.950-0.977, build "Spirit build" correct |
 | Same, enemy columns (enemy owned no items) and the rest of the screen | **0** false hits |
 | Without the corner mask | only 3 of 8 found: the mask is required for API icons |
-| Two *different* real icons | at most 0.561 alike (threshold 0.90) |
+| Best wrong item on any real icon | 0.77 (threshold 0.85) |
 | `downscale` 0.75 instead of 1.0 | weakest real match drops from 1.000 to 0.891 with own crops: keep 1.0 |
-| Active item (Cold Front) vs API art | not recognisable (0.58): crop actives yourself |
+| Active item (Cold Front) vs API art, comparing only the disc above the label | 0.935, the next real rival 0.73; dark art on dark world can reach 0.86, so the label's text is checked as well |
 
 **Heroes**, on two real 1080p frames (the second one a live capture from the app), with the
 downloaded card art only:
@@ -342,7 +337,7 @@ downloaded card art only:
 | Same frames resampled to 720p and 1440p | still 6 of 6 and 0 false hits, scores 0.852-0.949 |
 | 60 random game-world patches | at most 0.776, lead at most 0.282 (hence 0.80 and 0.25) |
 
-Speed (Apple M-series, one thread): reading the whole board, both teams with 123 templates and 12
+Speed (Apple M-series, one thread, before active items were added): reading the whole board, both teams with 123 templates and 12
 portraits, takes ~700 ms the first time and ~600 ms on a later look with three heroes known and nine empty
 columns; of that, the items of 6 columns ~170 ms. A hero already known costs next to nothing, an empty
 column ~30 ms. F6 tuning takes under a second on all threads.

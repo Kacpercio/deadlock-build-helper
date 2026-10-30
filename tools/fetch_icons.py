@@ -6,15 +6,13 @@ real 1080p screenshot: 8 of 8 passive icons matched at 0.95-0.98 with the tier c
 second-best item at most 0.65). They are saved as assets/templates/<item id>.png at their
 original 200 px; the helper resizes them to item_icon_size.
 
-Active items are drawn differently on the scoreboard (round, dark, with a localized "ACTIVE"
-label), so their shop art does not match. They go to assets/icons instead, for the panel's
-pictures, and are listed at the end: to recognise them, crop those from debug_roi.png (TAB+F9) as
-<item id>@active.png.
+Active items are drawn differently on the scoreboard: round, with a localized "ACTIVE" label across
+the bottom. Their shop art goes to assets/icons, where the helper compares only the part both have in
+common (tested on a real icon: 0.935, the next item 0.73), and uses it for the panel's pictures.
 
 Usage:
     python tools/fetch_icons.py                  # passive items, keep files that already exist
     python tools/fetch_icons.py --force          # re-download everything (e.g. after a patch)
-    python tools/fetch_icons.py --include-active # also use active items' shop art as templates
 """
 
 import argparse
@@ -39,7 +37,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, default=ROOT / "assets" / "templates")
     parser.add_argument("--force", action="store_true", help="overwrite icons that already exist")
-    parser.add_argument("--include-active", action="store_true", help="also download active items")
     args = parser.parse_args()
 
     try:
@@ -49,13 +46,12 @@ def main():
         return 1
 
     shop = [i for i in items if i.get("shopable") and i.get("shop_image")]
-    active = sorted((i for i in shop if i.get("is_active_item")), key=lambda i: i["name"])
     args.out.mkdir(parents=True, exist_ok=True)
     icons = args.out.parent / "icons"
     icons.mkdir(exist_ok=True)
 
     def folder(item):
-        return icons if item.get("is_active_item") and not args.include_active else args.out
+        return icons if item.get("is_active_item") else args.out
 
     def download(item):
         target = folder(item) / (item["class_name"].removeprefix("upgrade_") + ".png")
@@ -78,10 +74,6 @@ def main():
             print(r, file=sys.stderr)
     print(f"{results.count('saved')} saved, {results.count('kept')} already there, "
           f"{sum(r.startswith('failed') for r in results)} failed -> {args.out}, {icons}")
-    if not args.include_active:
-        print(f"\n{len(active)} active items need a crop of their own as <id>@active.png:")
-        for i in active:
-            print(f"  {i['class_name'].removeprefix('upgrade_') + '@active.png':40} {i['name']}")
     return 0 if not any(r.startswith("failed") for r in results) else 1
 
 

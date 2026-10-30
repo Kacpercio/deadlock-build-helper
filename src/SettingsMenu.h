@@ -21,6 +21,7 @@ struct MenuContext {
     std::string myHero;
     const std::vector<std::pair<std::string, std::string>>* itemNames = nullptr;  // (display name, id)
     bool justPicked = false;              // a nickname was picked after the last scan
+    std::string howFound;                 // what the HUD and the nickname each said on the last scan
     std::string notice;                   // what the last change did
 };
 
@@ -29,6 +30,7 @@ struct MenuActions {
     bool close = false;
     bool apply = false;          // settings() changed for good: save and use them
     bool reset = false;          // back to config.json
+    bool saveScan = false;       // save the last scan's frame
     std::optional<int> pickMe;   // this column of your team shows your nickname; -1 forgets it
     std::optional<std::pair<std::string, cv::Rect>> learnIcon;  // this part of the frame looks like this item id
 };

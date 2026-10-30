@@ -84,6 +84,15 @@ void AnalysisWorker::requestLearnIcon(std::string itemId, cv::Rect box)
     wake_.notify_one();
 }
 
+void AnalysisWorker::requestSaveLastScan()
+{
+    {
+        std::lock_guard lock(mutex_);
+        pendingSaveScan_ = true;
+    }
+    wake_.notify_one();
+}
+
 void AnalysisWorker::requestPickMe(int allySlot)
 {
     {
@@ -146,6 +155,7 @@ void AnalysisWorker::run(std::stop_token stop)
         bool reloadFirst = false;
         bool tune = false;
         bool prepare = false;
+        bool saveScan = false;
         bool resetSettingsFile = false;
         std::optional<AppConfig> settings;
         std::optional<int> pick;
@@ -154,7 +164,7 @@ void AnalysisWorker::run(std::stop_token stop)
             std::unique_lock lock(mutex_);
             const auto pending = [this] {
                 return pendingScan_ || pendingReload_ || pendingTune_ || pendingPrepare_ || pendingSettings_ ||
-                       pendingResetSettings_ || pendingPick_ || pendingLearn_;
+                       pendingResetSettings_ || pendingPick_ || pendingLearn_ || pendingSaveScan_;
             };
             if (!wake_.wait_for(lock, stop, kKeepCaptureOpen, pending)) {
                 if (stop.stop_requested()) {
@@ -171,6 +181,7 @@ void AnalysisWorker::run(std::stop_token stop)
             tune = pendingTune_;
             pendingScan_ = pendingDebug_ = pendingReload_ = pendingTune_ = false;
             prepare = std::exchange(pendingPrepare_, false);
+            saveScan = std::exchange(pendingSaveScan_, false);
             resetSettingsFile = std::exchange(pendingResetSettings_, false);
             settings = std::exchange(pendingSettings_, std::nullopt);
             pick = std::exchange(pendingPick_, std::nullopt);
@@ -192,6 +203,9 @@ void AnalysisWorker::run(std::stop_token stop)
         }
         if (learn) {
             learnIcon(learn->first, learn->second);
+        }
+        if (saveScan) {
+            saveLastScan();
         }
 
         if (reloadFirst) {
@@ -266,10 +280,18 @@ void AnalysisWorker::tuneScale()
                               t.meanScore, saved ? ", saved to calibration.json" : ", could not save calibration.json"));
 }
 
+void AnalysisWorker::loadItemTemplates(VisionEngine& vision) const
+{
+    const fs::path folder = resolvePath(root_, cfg_.templateDir);
+    vision.loadTemplates(folder);
+    vision.addActiveItems(folder.parent_path() / "icons");
+}
+
 std::string AnalysisWorker::loadResources()
 {
     VisionEngine vision(itemVisionConfig(cfg_));
-    const size_t templates = vision.loadTemplates(resolvePath(root_, cfg_.templateDir));
+    loadItemTemplates(vision);
+    const size_t templates = vision.templateCount();
     vision_ = std::move(vision);
 
     CounterDatabase counters;
@@ -301,12 +323,12 @@ void AnalysisWorker::pickMe(int allySlot)
         publishConfig("nickname forgotten");
         return;
     }
-    const std::vector<cv::Rect> names = toPixels(cfg_.allyNames, lastFrameSize_);
-    if (lastPreview_.empty() || static_cast<size_t>(allySlot) >= names.size()) {
+    const std::vector<cv::Rect> names = toPixels(cfg_.allyNames, lastFrame_.size());
+    if (lastFrame_.empty() || static_cast<size_t>(allySlot) >= names.size()) {
         publishConfig("no scoreboard to read your nickname from: hold TAB in a match first");
         return;
     }
-    NameTemplate name = makeNameTemplate(lastPreview_, names[static_cast<size_t>(allySlot)]);
+    NameTemplate name = makeNameTemplate(lastFrame_, names[static_cast<size_t>(allySlot)]);
     if (name.empty() || !saveNameTemplate(file, name)) {
         publishConfig("could not save a nickname from that column");
         return;
@@ -315,19 +337,29 @@ void AnalysisWorker::pickMe(int allySlot)
     publishConfig("nickname saved");
 }
 
+void AnalysisWorker::saveLastScan()
+{
+    if (lastFrame_.empty()) {
+        publishConfig("no scan to save yet: hold TAB in a match first");
+        return;
+    }
+    const fs::path file = root_ / "debug_last_scan.png";
+    publishConfig(writeImage(file, lastFrame_) ? "saved " + file.string() : "could not save " + file.string());
+}
+
 void AnalysisWorker::learnIcon(const std::string& itemId, cv::Rect box)
 {
-    box &= cv::Rect(0, 0, lastPreview_.cols, lastPreview_.rows);
+    box &= cv::Rect(0, 0, lastFrame_.cols, lastFrame_.rows);
     if (box.empty()) {
         publishConfig("nothing to learn that icon from: hold TAB in a match first");
         return;
     }
     const fs::path folder = resolvePath(root_, cfg_.templateDir);
-    if (!writeImage(folder / (itemId + "@active.png"), lastPreview_(box))) {
+    if (!writeImage(folder / (itemId + "@active.png"), lastFrame_(box))) {
         publishConfig("could not save that icon");
         return;
     }
-    vision_.loadTemplates(folder);
+    loadItemTemplates(vision_);
     publishConfig("learned " + counters_.displayName(itemId));
 }
 
@@ -335,25 +367,39 @@ void AnalysisWorker::addMe(const cv::Mat& frame, AnalysisResult& result, Suggest
 {
     result.nicknameSet = !myName_.empty();
 
-    const HeroVerdict look = abilityBar_.recognize(frame, myHeroId_);
+    // You said who you are, so the nickname comes first. Without it the HUD tells which hero you play.
+    double nameScore = 0.0;
+    const int byName = myName_.empty() ? -1 : findName(frame, toPixels(cfg_.allyNames, frame.size()), myName_, &nameScore);
+    const HeroVerdict look = abilityBar_.recognize(frame, lastMyHero_);
     if (look.accepted) {
-        myHeroId_ = look.id;
+        result.myHeroId = look.id;
     }
-    result.myHeroId = myHeroId_;
-    const auto byHero = std::ranges::find(result.allies, myHeroId_, &EnemyPlayer::heroId);
+    const auto byHero = look.accepted ? std::ranges::find(result.allies, look.id, &EnemyPlayer::heroId) : result.allies.end();
 
-    // The HUD knows best. The nickname is for when it says nothing, such as a hero whose portrait
-    // cannot be recognised in its column.
-    if (!myHeroId_.empty() && byHero != result.allies.end()) {
+    if (byName >= 0) {
+        result.mySlot = byName;
+    } else if (byHero != result.allies.end()) {
         result.mySlot = byHero->slot;
-    } else if (!myName_.empty()) {
-        result.mySlot = findName(frame, toPixels(cfg_.allyNames, frame.size()), myName_);
+    } else if (const auto last = std::ranges::find(result.allies, lastMySlot_, &EnemyPlayer::slot);
+               last != result.allies.end() && !last->heroId.empty() && last->heroId == lastMyHero_) {
+        result.mySlot = lastMySlot_;
     }
-    const auto me = std::ranges::find(result.allies, result.mySlot, &EnemyPlayer::slot);
-    if (result.mySlot < 0 || me == result.allies.end()) {
-        result.mySlot = -1;
+    result.howFound = std::format("nickname: {} | abilities: {} {:.2f}", byName >= 0 ? std::format("column {} ({:.2f})", byName + 1, nameScore)
+                                                                                     : std::string(myName_.empty() ? "not picked" : "not found"),
+                                  look.id.empty() ? "?" : look.id, look.score);
+    if (result.mySlot < 0) {
         return;
     }
+
+    // Your column can be there with neither a recognised portrait nor a recognised item.
+    const auto me = std::ranges::find(result.allies, result.mySlot, &EnemyPlayer::slot);
+    if (me == result.allies.end()) {
+        result.me = {};
+        result.me.slot = result.mySlot;
+        return;
+    }
+    lastMySlot_ = result.mySlot;
+    lastMyHero_ = me->heroId;
     result.me = *me;
     result.me.tips.clear();  // how to play against your own items is no use to you
     result.me.avoid.clear();
@@ -452,13 +498,14 @@ AnalysisResult AnalysisWorker::analyze(bool debug)
 
     // Kept for the menu's preview and for picking your nickname. A copy: the debug images draw on the frame.
     constexpr double kPreviewShare = 0.62;  // enough for the scoreboard's item strips
-    lastPreview_ = (*frame)(cv::Rect(0, 0, frame->cols, static_cast<int>(frame->rows * kPreviewShare))).clone();
-    lastFrameSize_ = frame->size();
-    result.preview = lastPreview_;
-    result.frameSize = lastFrameSize_;
+    lastFrame_ = frame->clone();
+    result.preview = lastFrame_(cv::Rect(0, 0, frame->cols, static_cast<int>(frame->rows * kPreviewShare)));
+    result.frameSize = lastFrame_.size();
 
     if (debug) {
         saveDebugImages(*frame, searchArea, rows, portraits, detections);
+        publishConfig("saved debug_capture.png in " + root_.string());
+        std::cout << "[debug] you: " << result.howFound << '\n';
         const HeroVerdict bar = abilityBar_.recognize(*frame);
         std::cout << std::format("[debug] you, by your abilities: {} {:.3f}, next {:.3f}: {}; ability icons {}\n",
                                  bar.id.empty() ? "?" : bar.id, bar.score, bar.runnerUp,

@@ -38,7 +38,7 @@ struct AppConfig {
     std::filesystem::path templateDir = "assets/templates";
     std::filesystem::path countersFile = "assets/counters.json";
     int referenceHeight = 1080;  // screen height the template PNGs were cropped at
-    double matchThreshold = 0.90;
+    double matchThreshold = 0.85;
     double downscale = 1.0;      // < 1 is faster but costs accuracy on the small (27 px) icons
     int itemIconSize = 27;       // item icon height on the scoreboard at reference_height; 0 = use template size
     double itemCornerMask = 0.5; // ignored top-right share of each item icon (tier badge)

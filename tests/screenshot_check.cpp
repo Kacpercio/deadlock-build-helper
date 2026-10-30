@@ -70,7 +70,9 @@ int main(int argc, char** argv)
     HeroRecognizer heroes(heroConfig(cfg));
     CounterDatabase counters;
     counters.load(resolvePath(root, cfg.countersFile));
-    const size_t itemTemplates = items.loadTemplates(resolvePath(root, cfg.templateDir));
+    items.loadTemplates(resolvePath(root, cfg.templateDir));
+    items.addActiveItems(resolvePath(root, cfg.templateDir).parent_path() / "icons");
+    const size_t itemTemplates = items.templateCount();
     const size_t heroTemplates = heroes.loadTemplates(resolvePath(root, cfg.heroTemplateDir), counters.heroIds());
     std::printf("%dx%d screenshot, %zu item templates, %zu hero templates, threshold %.2f, downscale %.2f\n",
                 frame.cols, frame.rows, itemTemplates, heroTemplates, cfg.matchThreshold, cfg.downscale);
