@@ -1,12 +1,18 @@
 #include "Overlay.h"
 
+#include "VisionEngine.h"
+
 #include <dwmapi.h>
 
 #include <imgui.h>
 #include <imgui_impl_dx11.h>
 #include <imgui_impl_win32.h>
 
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
+
 #include <algorithm>
+#include <cmath>
 #include <format>
 #include <iostream>
 #include <iterator>
@@ -24,17 +30,16 @@ namespace {
 
 constexpr wchar_t kClassName[] = L"DeadlockBuildHelperOverlay";
 
-const ImVec4 kAccent{1.00f, 0.78f, 0.35f, 1.0f};
-const ImVec4 kEnemy{1.00f, 0.45f, 0.40f, 1.0f};
-const ImVec4 kCounter{0.45f, 0.90f, 0.55f, 1.0f};
+// Share of the screen width the panel uses (left of your team's scoreboard columns).
+constexpr float kPanelWidth = 0.17f;
 
-const ImVec4 kTip{0.70f, 0.78f, 1.00f, 1.0f};
+// A change needs a few frames to show: ImGui sizes a window from what it drew the frame before.
+constexpr int kFramesPerChange = 3;
 
-// How many tips per enemy fit in the panel without crowding it.
-constexpr size_t kMaxTipsPerPlayer = 2;
+constexpr int kIconSize = 64;  // texture size; the panel never draws larger
 
-// Share of the screen width the panel may use (left of your team's scoreboard columns).
-constexpr float kPanelMaxWidth = 0.17f;
+// The part of a 280x380 hero card the scoreboard shows: its face.
+const cv::Rect kHeroFace(0, 0, 280, 266);
 
 constexpr ImU32 kRowColor = IM_COL32(255, 215, 0, 255);
 constexpr ImU32 kPortraitColor = IM_COL32(0, 220, 255, 255);
@@ -42,22 +47,17 @@ constexpr ImU32 kHitColor = IM_COL32(80, 255, 120, 255);
 constexpr ImU32 kHeroHitColor = IM_COL32(255, 80, 255, 255);
 constexpr ImU32 kBannerBg = IM_COL32(0, 0, 0, 200);
 
-std::string join(const std::vector<std::string>& parts)
+ImFont* addFont(ImGuiIO& io, const char* file, float size)
 {
-    std::string out;
-    for (const auto& p : parts) {
-        if (!out.empty()) {
-            out += ", ";
-        }
-        out += p;
-    }
-    return out;
+    std::error_code ec;
+    return std::filesystem::exists(file, ec) ? io.Fonts->AddFontFromFileTTF(file, size) : nullptr;
 }
 
 }  // namespace
 
 Overlay::Overlay(RECT monitorRect)
     : rect_(monitorRect)
+    , bounds_(monitorRect)
 {
 }
 
@@ -68,6 +68,7 @@ Overlay::~Overlay()
         ImGui_ImplWin32_Shutdown();
         ImGui::DestroyContext();
     }
+    icons_.clear();
     rtv_.Reset();
     swapChain_.Reset();
     context_.Reset();
@@ -90,18 +91,23 @@ bool Overlay::init()
     io.IniFilename = nullptr;                      // nothing to persist
     io.ConfigFlags |= ImGuiConfigFlags_NoMouse;    // the window never receives input anyway
 
-    // Scale text and spacing with the monitor so 1440p/4K stay readable.
-    const float scale = std::max(1.0f, static_cast<float>(rect_.bottom - rect_.top) / 1080.0f);
-    ImFontConfig font;
-    font.SizePixels = 15.0f * scale;
-    io.Fonts->AddFontDefault(&font);
+    // Scale text and spacing with the monitor so the panel looks the same at every resolution.
+    const float scale = std::max(0.7f, static_cast<float>(rect_.bottom - rect_.top) / 1080.0f);
+    const float fontSize = 15.0f * scale;
+    panelStyle_.scale = scale;
+    panelStyle_.regular = addFont(io, "C:\\Windows\\Fonts\\segoeui.ttf", fontSize);
+    panelStyle_.bold = addFont(io, "C:\\Windows\\Fonts\\segoeuib.ttf", fontSize);
+    if (!panelStyle_.regular) {
+        ImFontConfig font;
+        font.SizePixels = fontSize;
+        panelStyle_.regular = io.Fonts->AddFontDefault(&font);
+    }
+    if (!panelStyle_.bold) {
+        panelStyle_.bold = panelStyle_.regular;
+    }
 
     ImGui::StyleColorsDark();
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 6.0f;
-    style.WindowBorderSize = 0.0f;
-    style.WindowPadding = ImVec2(12.0f, 10.0f);
-    style.ScaleAllSizes(scale);
+    ImGui::GetStyle().ScaleAllSizes(scale);
 
     ImGui_ImplWin32_Init(hwnd_);
     ImGui_ImplDX11_Init(device_.Get(), context_.Get());
@@ -174,11 +180,92 @@ bool Overlay::createDevice()
         return false;
     }
 
+    return createRenderTarget();
+}
+
+bool Overlay::createRenderTarget()
+{
     ComPtr<ID3D11Texture2D> backBuffer;
     if (FAILED(swapChain_->GetBuffer(0, IID_PPV_ARGS(&backBuffer)))) {
         return false;
     }
     return SUCCEEDED(device_->CreateRenderTargetView(backBuffer.Get(), nullptr, &rtv_));
+}
+
+void Overlay::setBounds(const RECT& bounds)
+{
+    if (EqualRect(&bounds, &bounds_)) {
+        return;
+    }
+    bounds_ = bounds;
+    const int width = bounds.right - bounds.left;
+    const int height = bounds.bottom - bounds.top;
+    context_->OMSetRenderTargets(0, nullptr, nullptr);
+    rtv_.Reset();
+    SetWindowPos(hwnd_, HWND_TOPMOST, bounds.left, bounds.top, width, height, SWP_NOACTIVATE);
+    swapChain_->ResizeBuffers(0, static_cast<UINT>(width), static_cast<UINT>(height), DXGI_FORMAT_UNKNOWN, 0);
+    createRenderTarget();
+}
+
+RECT Overlay::panelBounds(const OverlayModel& model) const
+{
+    const int monitorWidth = rect_.right - rect_.left;
+    const int monitorHeight = rect_.bottom - rect_.top;
+    const int left = rect_.left + static_cast<int>(monitorWidth * model.panelX);
+    const int top = rect_.top + static_cast<int>(monitorHeight * model.panelY);
+    return {left, top, std::min<LONG>(rect_.right, left + static_cast<LONG>(std::ceil(monitorWidth * kPanelWidth))),
+            rect_.bottom};
+}
+
+void Overlay::setIconFolders(std::filesystem::path items, std::filesystem::path heroes)
+{
+    itemFolder_ = std::move(items);
+    heroFolder_ = std::move(heroes);
+    icons_.clear();
+    drawnRevision_.clear();
+}
+
+ImTextureID Overlay::icon(const std::string& id, bool hero)
+{
+    const std::string key = (hero ? "hero:" : "item:") + id;
+    if (const auto it = icons_.find(key); it != icons_.end()) {
+        return reinterpret_cast<ImTextureID>(it->second.Get());
+    }
+
+    // Active items' shop art lives in its own folder: as a template it would only slow the search.
+    const std::filesystem::path folder = hero ? heroFolder_ : itemFolder_;
+    cv::Mat image = readImage(folder / (id + ".png"), cv::IMREAD_UNCHANGED);
+    if (image.empty() && !hero) {
+        image = readImage(folder.parent_path() / "icons" / (id + ".png"), cv::IMREAD_UNCHANGED);
+    }
+    if (image.empty() && !hero) {
+        image = readImage(folder / (id + "@active.png"), cv::IMREAD_UNCHANGED);
+    }
+
+    ComPtr<ID3D11ShaderResourceView> view;
+    if (!image.empty() && image.depth() == CV_8U && (image.channels() == 3 || image.channels() == 4)) {
+        if (hero && image.size() == cv::Size(280, 380)) {
+            image = image(kHeroFace);
+        }
+        cv::Mat rgba;
+        cv::cvtColor(image, rgba, image.channels() == 4 ? cv::COLOR_BGRA2RGBA : cv::COLOR_BGR2RGBA);
+        cv::resize(rgba, rgba, cv::Size(kIconSize, kIconSize), 0, 0, cv::INTER_AREA);
+
+        D3D11_TEXTURE2D_DESC desc{};
+        desc.Width = desc.Height = kIconSize;
+        desc.MipLevels = desc.ArraySize = 1;
+        desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        desc.SampleDesc.Count = 1;
+        desc.Usage = D3D11_USAGE_IMMUTABLE;
+        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        const D3D11_SUBRESOURCE_DATA data{rgba.data, static_cast<UINT>(rgba.step), 0};
+        ComPtr<ID3D11Texture2D> texture;
+        if (SUCCEEDED(device_->CreateTexture2D(&desc, &data, &texture))) {
+            device_->CreateShaderResourceView(texture.Get(), nullptr, &view);
+        }
+    }
+    icons_[key] = view;  // also remembers a missing picture, so it is not looked for every frame
+    return reinterpret_cast<ImTextureID>(view.Get());
 }
 
 bool Overlay::pumpMessages()
@@ -196,6 +283,9 @@ bool Overlay::pumpMessages()
 
 void Overlay::keepOnTop()
 {
+    if (!windowShown_) {
+        return;  // nothing to keep on top, and restacking windows is not free
+    }
     SetWindowPos(hwnd_, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 }
 
@@ -208,6 +298,20 @@ void Overlay::render(const OverlayModel& model)
         Sleep(16);
         return;
     }
+    // Same picture as already on screen: drawing it again would only make DWM recomposite the
+    // desktop for nothing, once per monitor refresh.
+    if (hasContent && model.revision == drawnRevision_ && framesToDraw_ == 0) {
+        Sleep(16);
+        return;
+    }
+    if (hasContent && model.revision != drawnRevision_) {
+        drawnRevision_ = model.revision;
+        framesToDraw_ = kFramesPerChange;
+    }
+    if (hasContent) {
+        // Only calibration needs the whole monitor. The smaller the window, the less DWM has to blend.
+        setBounds(model.calibrating ? rect_ : panelBounds(model));
+    }
     if (hasContent && !windowShown_) {
         ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
         keepOnTop();
@@ -218,7 +322,7 @@ void Overlay::render(const OverlayModel& model)
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
     if (hasContent) {
-        drawPanel(model);
+        drawPanelView(model);
     }
     if (model.calibrating) {
         drawCalibration(model);
@@ -232,112 +336,26 @@ void Overlay::render(const OverlayModel& model)
     swapChain_->Present(1, 0);  // vsync caps the loop at the refresh rate
 
     lastFrameHadContent_ = hasContent;
+    framesToDraw_ = std::max(0, framesToDraw_ - 1);
 
     // A visible full-screen topmost window, even a fully transparent one, keeps the game out of
     // DWM's independent-flip path (more latency, lower FPS). Hide it once the cleared frame is up.
     if (!hasContent && windowShown_) {
         ShowWindow(hwnd_, SW_HIDE);
         windowShown_ = false;
+        drawnRevision_.clear();
     }
 }
 
-void Overlay::drawPanel(const OverlayModel& model)
+void Overlay::drawPanelView(const OverlayModel& model)
 {
-    const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    // At most 17% of the screen wide: in a 6v6 match your team's scoreboard columns start at
-    // about x = 17%, and the panel must not cover them.
-    const float maxWidth = viewport->Size.x * kPanelMaxWidth;
-    const float wrapWidth = maxWidth - 2.0f * ImGui::GetStyle().WindowPadding.x - ImGui::GetStyle().IndentSpacing;
-
-    ImGui::SetNextWindowPos(ImVec2(viewport->Size.x * model.panelX, viewport->Size.y * model.panelY), ImGuiCond_Always);
-    ImGui::SetNextWindowBgAlpha(0.85f);
-    ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f), ImVec2(maxWidth, viewport->Size.y * 0.85f));
-
-    constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
-                                       ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings |
-                                       ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
-
-    if (ImGui::Begin("##build_helper", nullptr, flags)) {
-        ImGui::TextColored(kAccent, "BUILD HELPER");
-        ImGui::SameLine();
-        ImGui::PushTextWrapPos(maxWidth - ImGui::GetStyle().WindowPadding.x);
-        ImGui::TextDisabled("%s", model.status.c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::Separator();
-
-        if (model.perPlayer) {
-            ImGui::TextColored(kEnemy, "Enemies");
-            if (model.players.empty()) {
-                ImGui::TextDisabled("  none detected");
-            }
-            for (const auto& player : model.players) {
-                // "#3 Haze - Gun build (W5 S1 V2)"
-                std::string header = std::format("#{}", player.slot + 1);
-                header += " " + (player.hero.empty() ? std::string("(hero unknown)") : player.hero);
-                if (!player.build.empty()) {
-                    header += std::format(" - {} (W{} S{} V{})", player.build, player.weaponItems,
-                                          player.spiritItems, player.vitalityItems);
-                }
-                ImGui::TextColored(kEnemy, "%s", header.c_str());
-
-                ImGui::Indent();
-                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrapWidth);
-                if (player.items.empty()) {
-                    ImGui::TextDisabled("no items yet");
-                } else {
-                    ImGui::TextUnformatted(join(player.items).c_str());
-                }
-                for (size_t t = 0; t < player.tips.size() && t < kMaxTipsPerPlayer; ++t) {
-                    ImGui::TextColored(kTip, "> %s", player.tips[t].c_str());
-                }
-                if (!player.avoid.empty()) {
-                    ImGui::TextDisabled("avoid: %s", join(player.avoid).c_str());
-                }
-                ImGui::PopTextWrapPos();
-                ImGui::Unindent();
-            }
-        } else {
-            ImGui::TextColored(kEnemy, "Enemy items");
-            if (model.enemyItems.empty()) {
-                ImGui::TextDisabled("  none detected");
-            }
-            for (const auto& item : model.enemyItems) {
-                if (item.count > 1) {
-                    ImGui::BulletText("%s  x%d", item.displayName.c_str(), item.count);
-                } else {
-                    ImGui::BulletText("%s", item.displayName.c_str());
-                }
-            }
-            // One search area for the whole team: show its tips together.
-            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrapWidth);
-            for (const auto& player : model.players) {
-                for (size_t t = 0; t < player.tips.size() && t < 3 * kMaxTipsPerPlayer; ++t) {
-                    ImGui::TextColored(kTip, "> %s", player.tips[t].c_str());
-                }
-            }
-            ImGui::PopTextWrapPos();
-        }
-
-        ImGui::Spacing();
-        ImGui::TextColored(kCounter, "Suggested counters");
-        if (model.suggestions.empty()) {
-            ImGui::TextDisabled("  nothing to counter yet");
-        }
-        for (const auto& s : model.suggestions) {
-            ImGui::Bullet();
-            ImGui::TextColored(kCounter, "%s", s.item.c_str());
-            ImGui::SameLine();
-            ImGui::TextDisabled("+%d  vs %s", s.score, join(s.answers).c_str());
-            if (!s.reason.empty()) {
-                ImGui::Indent();
-                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrapWidth);
-                ImGui::TextDisabled("%s", s.reason.c_str());
-                ImGui::PopTextWrapPos();
-                ImGui::Unindent();
-            }
-        }
-    }
-    ImGui::End();
+    const float monitorWidth = static_cast<float>(rect_.right - rect_.left);
+    const float monitorHeight = static_cast<float>(rect_.bottom - rect_.top);
+    // In its own small window the panel starts at the window's corner.
+    const ImVec2 pos = model.calibrating ? ImVec2(monitorWidth * model.panelX, monitorHeight * model.panelY) : ImVec2(0.0f, 0.0f);
+    const PanelIcons icons{[this](const std::string& id) { return icon(id, false); },
+                           [this](const std::string& id) { return icon(id, true); }};
+    drawPanel(model.panel, pos, monitorWidth * kPanelWidth, monitorHeight * (1.0f - model.panelY) - 2.0f, panelStyle_, icons);
 }
 
 void Overlay::drawCalibration(const OverlayModel& model)

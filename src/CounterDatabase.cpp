@@ -8,6 +8,18 @@
 
 namespace {
 
+// Shop prices per tier (the same for all items of a tier). Tier 5 items are not bought with souls.
+int costOfTier(int tier)
+{
+    switch (tier) {
+    case 1: return 800;
+    case 2: return 1600;
+    case 3: return 3200;
+    case 4: return 6400;
+    default: return 0;
+    }
+}
+
 template <typename Table>
 Table parseSection(const nlohmann::json& root, const char* section)
 {
@@ -20,6 +32,7 @@ Table parseSection(const nlohmann::json& root, const char* section)
         entry.display = node.value("display", id);
         entry.weight = node.value("weight", 1);
         entry.slot = node.value("slot", std::string{});
+        entry.tier = node.value("tier", 0);
         entry.tip = node.value("tip", std::string{});
         entry.avoid = node.value("avoid", std::vector<std::string>{});
         for (const auto& c : node.value("counters", nlohmann::json::array())) {
@@ -54,6 +67,10 @@ bool CounterDatabase::load(const std::filesystem::path& file)
         items_ = std::move(items);
         heroes_ = std::move(heroes);
         archetypes_ = std::move(archetypes);
+        itemIdByName_.clear();
+        for (const auto& [id, entry] : items_) {
+            itemIdByName_[entry.display] = id;
+        }
         return true;
     } catch (const nlohmann::json::exception& e) {
         std::cerr << "[counters] parse error in " << file.string() << ": " << e.what() << '\n';
@@ -142,6 +159,13 @@ std::vector<Suggestion> CounterDatabase::suggest(const SuggestInput& input, size
     std::vector<Suggestion> out;
     out.reserve(byItem.size());
     for (auto& [_, s] : byItem) {
+        if (const auto id = itemIdByName_.find(s.item); id != itemIdByName_.end()) {
+            const Entry& item = items_.at(id->second);
+            s.itemId = id->second;
+            s.slot = item.slot;
+            s.tier = item.tier;
+            s.cost = costOfTier(item.tier);
+        }
         out.push_back(std::move(s));
     }
     std::ranges::stable_sort(out, std::greater{}, &Suggestion::score);

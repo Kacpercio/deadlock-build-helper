@@ -2,6 +2,7 @@
 
 #include "PlayerAnalysis.h"
 
+#include <opencv2/core/utility.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
@@ -14,6 +15,14 @@
 
 namespace fs = std::filesystem;
 
+namespace {
+
+// Long enough to cover a run of scans (calibration rescans every 400 ms), short enough that the
+// capture is closed for most of a match.
+constexpr auto kKeepCaptureOpen = std::chrono::seconds(3);
+
+}  // namespace
+
 AnalysisWorker::AnalysisWorker(ScreenCapture& capture, AppConfig cfg, fs::path root)
     : capture_(capture)
     , root_(std::move(root))
@@ -22,6 +31,7 @@ AnalysisWorker::AnalysisWorker(ScreenCapture& capture, AppConfig cfg, fs::path r
     , vision_(itemVisionConfig(cfg_))
     , heroes_(heroConfig(cfg_))
 {
+    applyThreadLimit();
     publishConfig("loaded: " + loadResources());
     thread_ = std::jthread([this](std::stop_token stop) { run(stop); });
 }
@@ -74,8 +84,16 @@ std::optional<ConfigSnapshot> AnalysisWorker::takeConfigIfNewer(std::uint64_t kn
     return publishedConfig_;
 }
 
+void AnalysisWorker::applyThreadLimit() const
+{
+    cv::setNumThreads(cfg_.scanThreads);
+}
+
 void AnalysisWorker::run(std::stop_token stop)
 {
+    // The game comes first: a scan may take longer, but should not take frames from it.
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+
     while (true) {
         bool scan = false;
         bool debug = false;
@@ -83,8 +101,15 @@ void AnalysisWorker::run(std::stop_token stop)
         bool tune = false;
         {
             std::unique_lock lock(mutex_);
-            if (!wake_.wait(lock, stop, [this] { return pendingScan_ || pendingReload_ || pendingTune_; })) {
-                return;  // stop requested
+            const auto pending = [this] { return pendingScan_ || pendingReload_ || pendingTune_; };
+            if (!wake_.wait_for(lock, stop, kKeepCaptureOpen, pending)) {
+                if (stop.stop_requested()) {
+                    return;
+                }
+                capture_.suspend();
+                if (!wake_.wait(lock, stop, pending)) {
+                    return;  // stop requested
+                }
             }
             scan = pendingScan_;
             debug = pendingDebug_;
@@ -138,6 +163,7 @@ void AnalysisWorker::reload()
     }
 
     cfg_ = std::move(loaded.config);
+    applyThreadLimit();
     std::string summary = "reloaded: " + loadResources();
     if (cfg_.monitorIndex != monitorIndex_) {
         summary += " (monitor_index needs a restart)";
@@ -152,7 +178,7 @@ void AnalysisWorker::tuneScale()
         publishConfig("scale tuning failed: screen capture failed");
         return;
     }
-    const ScaleTune t = vision_.tuneScale(*frame, boundingBox(toPixels(cfg_.enemyRows, frame->size())));
+    const ScaleTune t = vision_.tuneScale(*frame, toPixels(cfg_.enemyRows, frame->size()));
     if (t.detections == 0) {
         publishConfig("scale tuning found no icons: hold the scoreboard open and check enemy_rows");
         return;
@@ -213,7 +239,7 @@ AnalysisResult AnalysisWorker::analyze(bool debug)
     // Search the bounding box of all rows once, then attribute each hit to the row it sits in.
     const cv::Rect searchArea = boundingBox(rows);
 
-    std::vector<Detection> detections = vision_.detect(*frame, searchArea);
+    std::vector<Detection> detections = rows.size() > 1 ? vision_.scan(*frame, rows) : vision_.detect(*frame, searchArea);
     assignToRows(detections, rows);
 
     const std::vector<HeroVerdict> verdicts = addHeroes(heroes_, *frame, portraits, rows.size(), detections);

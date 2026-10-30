@@ -19,6 +19,7 @@ debug_*.png
 # Game art: downloaded by tools/fetch_icons.py or cropped from your own screenshots
 /assets/templates/*.png
 /assets/heroes/*.png
+/assets/icons/
 
 # Python
 __pycache__/

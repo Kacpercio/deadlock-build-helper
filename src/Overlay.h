@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Config.h"
+#include "PanelView.h"
 #include "Types.h"
 
 #include <windows.h>
@@ -8,17 +9,16 @@
 #include <d3d11.h>
 #include <wrl/client.h>
 
+#include <filesystem>
+#include <map>
 #include <string>
 #include <vector>
 
 struct OverlayModel {
     bool visible = false;      // the suggestion panel
     bool calibrating = false;  // row outlines + live detections + banner (implies the panel)
-    std::string status;
-    bool perPlayer = false;    // more than one enemy row configured: list items per enemy
-    std::vector<EnemyItem> enemyItems;
-    std::vector<EnemyPlayer> players;
-    std::vector<Suggestion> suggestions;
+    std::string revision;      // changes whenever the content below does; nothing is redrawn otherwise
+    PanelModel panel;
     float panelX = 0.02f;  // panel top-left corner, normalized to the monitor
     float panelY = 0.30f;
 
@@ -29,7 +29,8 @@ struct OverlayModel {
     std::string banner;
 };
 
-// Full-monitor, transparent, click-through, always-on-top window drawn with Dear ImGui on D3D11.
+// Transparent, click-through, always-on-top window drawn with Dear ImGui on D3D11: just big enough
+// for the panel, or the whole monitor while calibrating. It is hidden when there is nothing to show.
 // It is excluded from screen capture, so it never shows up in its own scans (or in OBS/Discord).
 class Overlay {
 public:
@@ -49,15 +50,29 @@ public:
     // Games sometimes push themselves above other topmost windows; call this periodically.
     void keepOnTop();
 
+    // Where the panel finds its item and hero pictures.
+    void setIconFolders(std::filesystem::path items, std::filesystem::path heroes);
+
 private:
     bool createWindow();
     bool createDevice();
-    void drawPanel(const OverlayModel& model);
+    bool createRenderTarget();
+    void setBounds(const RECT& bounds);
+    RECT panelBounds(const OverlayModel& model) const;
+    ImTextureID icon(const std::string& id, bool hero);
+    void drawPanelView(const OverlayModel& model);
     void drawCalibration(const OverlayModel& model);
     static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-    RECT rect_;
+    RECT rect_;    // the monitor
+    RECT bounds_;  // the window, in the same coordinates
     HWND hwnd_ = nullptr;
+    PanelStyle panelStyle_;
+    std::filesystem::path itemFolder_;
+    std::filesystem::path heroFolder_;
+    std::map<std::string, Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>> icons_;
+    std::string drawnRevision_;
+    int framesToDraw_ = 0;
     bool imguiReady_ = false;
     bool lastFrameHadContent_ = true;  // true so the very first frame clears the window
     bool windowShown_ = false;

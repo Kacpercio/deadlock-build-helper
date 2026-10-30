@@ -30,7 +30,11 @@ public:
 
     // Latest frame as 8-bit BGR. Recreates the duplication if Windows revoked it
     // (resolution change, fullscreen toggle, UAC prompt).
-    std::optional<cv::Mat> grab(unsigned timeoutMs = 100);
+    std::optional<cv::Mat> grab(unsigned timeoutMs = 500);
+
+    // Stops duplicating until the next grab(). An open duplication makes Windows keep compositing
+    // the desktop for it, which costs the game frames even when nothing is being read.
+    void suspend();
 
 private:
     bool initialize();

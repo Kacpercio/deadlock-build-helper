@@ -7,13 +7,14 @@ second-best item at most 0.65). They are saved as assets/templates/<item id>.png
 original 200 px; the helper resizes them to item_icon_size.
 
 Active items are drawn differently on the scoreboard (round, dark, with a localized "ACTIVE"
-label), so their shop art does not match. They are skipped by default and listed at the end:
-crop those from debug_roi.png (TAB+F9) as <item id>@active.png.
+label), so their shop art does not match. They go to assets/icons instead, for the panel's
+pictures, and are listed at the end: to recognise them, crop those from debug_roi.png (TAB+F9) as
+<item id>@active.png.
 
 Usage:
     python tools/fetch_icons.py                  # passive items, keep files that already exist
     python tools/fetch_icons.py --force          # re-download everything (e.g. after a patch)
-    python tools/fetch_icons.py --include-active # also save active items' shop art
+    python tools/fetch_icons.py --include-active # also use active items' shop art as templates
 """
 
 import argparse
@@ -49,11 +50,15 @@ def main():
 
     shop = [i for i in items if i.get("shopable") and i.get("shop_image")]
     active = sorted((i for i in shop if i.get("is_active_item")), key=lambda i: i["name"])
-    wanted = [i for i in shop if args.include_active or not i.get("is_active_item")]
     args.out.mkdir(parents=True, exist_ok=True)
+    icons = args.out.parent / "icons"
+    icons.mkdir(exist_ok=True)
+
+    def folder(item):
+        return icons if item.get("is_active_item") and not args.include_active else args.out
 
     def download(item):
-        target = args.out / (item["class_name"].removeprefix("upgrade_") + ".png")
+        target = folder(item) / (item["class_name"].removeprefix("upgrade_") + ".png")
         if target.exists() and not args.force:
             return "kept"
         try:
@@ -66,13 +71,13 @@ def main():
         return "saved"
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-        results = list(pool.map(download, wanted))
+        results = list(pool.map(download, shop))
 
     for r in results:
         if r.startswith("failed"):
             print(r, file=sys.stderr)
     print(f"{results.count('saved')} saved, {results.count('kept')} already there, "
-          f"{sum(r.startswith('failed') for r in results)} failed -> {args.out}")
+          f"{sum(r.startswith('failed') for r in results)} failed -> {args.out}, {icons}")
     if not args.include_active:
         print(f"\n{len(active)} active items need a crop of their own as <id>@active.png:")
         for i in active:

@@ -156,7 +156,8 @@ int main()
     std::string notice;
     Clock::time_point noticeUntil{};
 
-    KeyEdge scoreboardKey, debugKey, reloadKey, calibrateKey, tuneKey;
+    KeyEdge scoreboardKey, debugKey, reloadKey, calibrateKey, tuneKey, pinKey;
+    bool pinned = false;
     bool scannedThisPress = false;
     bool calibrating = false;
     Clock::time_point scoreboardDownSince{};
@@ -176,6 +177,7 @@ int main()
             cfg = std::move(snapshot->config);
             gameTitle = widen(cfg.gameWindowTitle);
             banner = calibrationBanner(cfg.hotkeys);
+            overlay.setIconFolders(resolvePath(root, cfg.templateDir), resolvePath(root, cfg.heroTemplateDir));
             notice = std::move(snapshot->summary);
             noticeUntil = now + std::chrono::seconds(4);
             std::cout << "[config] " << notice << '\n';
@@ -215,6 +217,10 @@ int main()
             std::cout << "[calibration] " << (calibrating ? "on" : "off") << '\n';
         }
 
+        if (pinKey.pressed(gameFocused && keyDown(cfg.hotkeys.pinPanel))) {
+            pinned = !pinned;
+        }
+
         if (auto fresh = worker.takeIfNewer(shown.version)) {
             shown = std::move(*fresh);
         }
@@ -225,14 +231,18 @@ int main()
         }
 
         OverlayModel model;
-        model.visible = scoreboardDown;
+        // Pinned, the last result stays up after TAB is released, for instance over the shop.
+        model.visible = scoreboardDown || (pinned && gameFocused && shown.version > 0);
         model.calibrating = calibrating && gameFocused;
         if (model.visible || model.calibrating) {
-            model.status = now < noticeUntil ? notice : statusLine(shown, worker.busy());
-            model.perPlayer = cfg.enemyRows.size() > 1;
-            model.enemyItems = shown.enemyItems;
-            model.players = shown.players;
-            model.suggestions = shown.suggestions;
+            model.panel.status = now < noticeUntil ? notice : statusLine(shown, worker.busy());
+            model.panel.pinned = pinned;
+            model.panel.perPlayer = cfg.enemyRows.size() > 1;
+            model.panel.enemyItems = shown.enemyItems;
+            model.panel.players = shown.players;
+            model.panel.suggestions = shown.suggestions;
+            model.revision = std::format("{} {} {} {} {}", shown.version, configVersion, model.calibrating, pinned,
+                                         model.panel.status);
             model.panelX = static_cast<float>(cfg.panelX);
             model.panelY = static_cast<float>(cfg.panelY);
         }

@@ -3,6 +3,8 @@
   "monitor_index": 0,
   "capture_delay_ms": 250,
   "calibration_scan_ms": 400,
+  // CPU threads a scan may use. More makes the scan quicker, but takes them from the game.
+  "scan_threads": 2,
 
   // Key names: TAB, SPACE, CAPSLOCK, SHIFT, CTRL, ALT, F1-F24, A-Z, 0-9, NUMPAD0-9,
   // INSERT, DELETE, HOME, END, PAGEUP, PAGEDOWN, MOUSE3, MOUSE4, MOUSE5.
@@ -11,7 +13,8 @@
     "calibrate": "F7",
     "reload": "F8",
     "debug_dump": "F9",
-    "tune_scale": "F6"
+    "tune_scale": "F6",
+    "pin_panel": "F5"
   },
 
   "template_dir": "assets/templates",

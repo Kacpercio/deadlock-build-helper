@@ -50,6 +50,7 @@ private:
         int weight = 1;
         std::vector<Counter> counters;
         std::string slot;
+        int tier = 0;
         std::string tip;
         std::vector<std::string> avoid;
     };
@@ -60,4 +61,5 @@ private:
     Table items_;
     Table heroes_;
     Table archetypes_;
+    std::unordered_map<std::string, std::string> itemIdByName_;  // counters refer to items by name
 };

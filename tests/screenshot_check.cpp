@@ -1,20 +1,23 @@
 // Runs the helper's whole recognition pipeline on a saved screenshot - no game, no Windows APIs:
 //
-//   screenshot_check <screenshot.png> <assets dir> [--allies] [--out annotated.png]
+//   screenshot_check <screenshot.png> <assets dir> [--allies] [--thorough] [--threads n] [--out annotated.png]
 //
 // Uses config.json (+ calibration.json), the templates and counters.json from <assets dir>,
 // exactly like the app. --allies also reads your own team's columns (the enemy boxes mirrored
 // around the screen centre), handy when the screenshot only shows items on your side.
+// --thorough uses the full template search instead of the fast scan, to compare the two.
 #include "Config.h"
 #include "CounterDatabase.h"
 #include "HeroRecognizer.h"
 #include "PlayerAnalysis.h"
 #include "VisionEngine.h"
 
+#include <opencv2/core/utility.hpp>
 #include <opencv2/imgproc.hpp>
 
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <string>
@@ -43,16 +46,21 @@ struct Side {
 int main(int argc, char** argv)
 {
     if (argc < 3) {
-        std::printf("usage: screenshot_check <screenshot.png> <assets dir> [--allies] [--out annotated.png]\n");
+        std::printf("usage: screenshot_check <screenshot.png> <assets dir> [--allies] [--thorough] [--threads n] [--out annotated.png]\n");
         return 2;
     }
     const fs::path shot = argv[1];
     const fs::path assets = argv[2];
     bool allies = false;
+    bool thorough = false;
     fs::path out = "screenshot_check.png";
     for (int i = 3; i < argc; ++i) {
         if (std::strcmp(argv[i], "--allies") == 0) {
             allies = true;
+        } else if (std::strcmp(argv[i], "--thorough") == 0) {
+            thorough = true;
+        } else if (std::strcmp(argv[i], "--threads") == 0 && i + 1 < argc) {
+            cv::setNumThreads(std::atoi(argv[++i]));
         } else if (std::strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
             out = argv[++i];
         }
@@ -90,7 +98,7 @@ int main(int argc, char** argv)
         const auto portraits = toPixels(side.portraits, frame.size());
 
         const auto start = std::chrono::steady_clock::now();
-        std::vector<Detection> detections = items.detect(frame, boundingBox(rows));
+        std::vector<Detection> detections = thorough ? items.detect(frame, boundingBox(rows)) : items.scan(frame, rows);
         assignToRows(detections, rows);
         const auto verdicts = addHeroes(heroes, frame, portraits, rows.size(), detections);
         const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();

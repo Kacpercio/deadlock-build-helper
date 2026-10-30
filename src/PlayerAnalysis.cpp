@@ -85,7 +85,6 @@ std::vector<EnemyPlayer> describePlayers(const std::vector<Detection>& detection
 {
     std::vector<EnemyPlayer> players(rowCount);
     std::vector<bool> seen(rowCount, false);
-    std::vector<std::string> heroIds(rowCount);
 
     for (const auto& d : detections) {
         if (d.slot < 0 || static_cast<size_t>(d.slot) >= rowCount) {
@@ -95,12 +94,12 @@ std::vector<EnemyPlayer> describePlayers(const std::vector<Detection>& detection
         EnemyPlayer& p = players[slot];
         seen[slot] = true;
         if (d.isHero) {
-            heroIds[slot] = d.itemId;
+            p.heroId = d.itemId;
             p.hero = counters.heroName(d.itemId);
             continue;
         }
         ++input.items[d.itemId];
-        p.items.push_back(counters.displayName(d.itemId));
+        p.itemIds.push_back(d.itemId);
         addUnique(p.tips, counters.tipFor(d.itemId));
         const std::string shopSlot = counters.slotOf(d.itemId);
         if (shopSlot == "weapon") {
@@ -119,11 +118,14 @@ std::vector<EnemyPlayer> describePlayers(const std::vector<Detection>& detection
         }
         EnemyPlayer& p = players[i];
         p.slot = static_cast<int>(i);
-        std::ranges::sort(p.items);
+        std::ranges::sort(p.itemIds, {}, [&](const std::string& id) { return counters.displayName(id); });
+        for (const auto& id : p.itemIds) {
+            p.items.push_back(counters.displayName(id));
+        }
 
-        if (!heroIds[i].empty()) {
-            ++input.heroes[heroIds[i]];
-            p.avoid = counters.avoidAgainst(heroIds[i]);
+        if (!p.heroId.empty()) {
+            ++input.heroes[p.heroId];
+            p.avoid = counters.avoidAgainst(p.heroId);
         }
 
         // A build is "gun" / "spirit" / "tank" when one shop slot clearly dominates its items.

@@ -6,12 +6,24 @@
 
 using Microsoft::WRL::ComPtr;
 
+namespace {
+
+constexpr unsigned kSecondFrameWaitMs = 100;
+
+}  // namespace
+
 ScreenCapture::ScreenCapture(int monitorIndex)
     : monitorIndex_(monitorIndex)
 {
     if (!initialize()) {
         std::cerr << "[capture] could not start Desktop Duplication on monitor " << monitorIndex_ << '\n';
     }
+}
+
+void ScreenCapture::suspend()
+{
+    duplication_.Reset();
+    lastFrame_.release();
 }
 
 void ScreenCapture::reset()
@@ -79,7 +91,8 @@ bool ScreenCapture::initialize()
 std::optional<cv::Mat> ScreenCapture::grab(unsigned timeoutMs)
 {
     for (int attempt = 0; attempt < 2; ++attempt) {
-        if (!duplication_ && !initialize()) {
+        const bool justOpened = !duplication_;
+        if (justOpened && !initialize()) {
             return std::nullopt;
         }
 
@@ -102,8 +115,18 @@ std::optional<cv::Mat> ScreenCapture::grab(unsigned timeoutMs)
             return std::nullopt;
         }
 
-        const bool copied = copyToMat(resource.Get());
+        bool copied = copyToMat(resource.Get());
         duplication_->ReleaseFrame();
+
+        // The first image of a new duplication may predate it, or be blank on some drivers. A game
+        // presents again within milliseconds, so take the next one when there is one.
+        if (justOpened) {
+            ComPtr<IDXGIResource> next;
+            if (SUCCEEDED(duplication_->AcquireNextFrame(kSecondFrameWaitMs, &info, &next))) {
+                copied = copyToMat(next.Get()) || copied;
+                duplication_->ReleaseFrame();
+            }
+        }
         if (!copied) {
             return std::nullopt;
         }

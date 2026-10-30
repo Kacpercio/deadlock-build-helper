@@ -9,7 +9,9 @@ template matching on the scoreboard, works out for each enemy:
 - items that do **badly** against their hero.
 
 It then ranks **what to buy** against all of that together, in a transparent, click-through
-Dear ImGui panel. Counters come from `assets/counters.json` (see "Counter data").
+Dear ImGui panel: each item with its picture, shop tab, tier and price, so it is quick to find in the
+shop. Press **F5** to keep the panel up while you shop. Counters come from `assets/counters.json`
+(see "Counter data").
 
 ## What it does and does not touch
 
@@ -31,6 +33,7 @@ All of them only react while the Deadlock window is focused, and can be changed 
 | Key (default) | Action |
 | --- | --- |
 | **TAB** (hold) | Show the panel; one scan per press after `capture_delay_ms` |
+| **F5** | Pin the panel: the last result stays on screen after TAB is released, for instance over the shop |
 | **TAB + F6** | Auto-tune the icon size to your screen; saved to `assets/calibration.json` |
 | **F7** | Toggle calibration mode: enemy rows (yellow) and live detections (green) drawn over the game |
 | **F8** | Reload `config.json`, `counters.json` and the templates without restarting |
@@ -48,6 +51,7 @@ deadlock-build-helper/
 │  ├─ config.json          hotkeys, enemy rows, thresholds, panel position
 │  ├─ counters.json        items / builds / heroes -> counters (generated, see "Counter data")
 │  ├─ templates/           one PNG per item icon (not in git: tools/fetch_icons.py); ITEM_IDS.txt lists the names
+│  ├─ icons/               active items' shop art, for the panel's pictures only (not in git: tools/fetch_icons.py)
 │  └─ heroes/              one PNG per hero (not in git: tools/fetch_heroes.py); HERO_IDS.txt lists the names
 ├─ tests/
 │  ├─ logic_tests.cpp      config, counters, ranking, per-enemy analysis
@@ -62,23 +66,32 @@ deadlock-build-helper/
    ├─ Types.h              Detection / EnemyPlayer / Suggestion / AnalysisResult
    ├─ Config.{h,cpp}       config.json loader, key names
    ├─ ScreenCapture.{h,cpp}   DXGI Desktop Duplication -> cv::Mat (BGR)
-   ├─ VisionEngine.{h,cpp}    multi-template matchTemplate + non-max suppression (item icons)
+   ├─ VisionEngine.{h,cpp}    item icons: fast two-pass scan per column, thorough search, size tuning
    ├─ HeroRecognizer.{h,cpp}  which hero a portrait shows, from the card art at many scales
    ├─ CounterDatabase.{h,cpp} counters.json + suggestion ranking (items, heroes, builds)
    ├─ PlayerAnalysis.{h,cpp}  detections -> per-enemy hero, items, build, tips
    ├─ AnalysisWorker.{h,cpp}  background thread: capture -> vision -> per-row grouping, reloads
-   └─ Overlay.{h,cpp}      transparent click-through window, panel + calibration drawing
+   ├─ PanelView.{h,cpp}    the panel's layout and look; needs only Dear ImGui
+   └─ Overlay.{h,cpp}      transparent click-through window, item pictures, calibration drawing
 ```
 
 Flow: the main thread renders the overlay and polls the hotkeys. Shortly after TAB goes down it
-asks `AnalysisWorker` for a scan. The worker grabs a frame, matches every template inside the
-bounding box of the enemy rows in parallel, assigns each hit to the row its centre falls in,
-ranks counters, and publishes the result. The worker owns the templates and the counter table,
+asks `AnalysisWorker` for a scan. The worker grabs a frame, matches the templates against each enemy
+column, recognises the portraits, ranks counters, and publishes the result. The worker owns the templates and the counter table,
 so a reload (F8) happens on its thread between scans and needs no locking around the vision code.
 
 The overlay window is excluded from capture (`WDA_EXCLUDEFROMCAPTURE`), so it never detects its
-own panel or calibration boxes, and it is hidden completely whenever nothing is drawn, so it costs
-the game nothing during normal play.
+own panel or calibration boxes.
+
+**Keeping the game's frame rate.** Between scans the helper costs almost nothing:
+
+- The window is hidden whenever nothing is drawn. When shown it is only as big as the panel, and it
+  redraws only when the content changes, so DWM has little to blend.
+- The screen capture is closed 3 seconds after the last scan: an open Desktop Duplication keeps
+  Windows compositing for it.
+- A scan happens once per TAB press, on a below-normal-priority thread, limited to `scan_threads` CPU
+  threads (default 2). It first looks for each icon in grey at half size, and checks in colour only
+  what looks promising.
 
 ## Building on Windows (step by step)
 
@@ -141,7 +154,8 @@ the left, the enemy team on the right.
    ```
    This saves the shop icons of all **123 passive items** into `assets\templates\`. The
    scoreboard shows exactly that artwork; the tier badge it adds in the top-right corner is
-   ignored (`item_corner_mask`). Rebuild once so they are copied next to the exe.
+   ignored (`item_corner_mask`). The 50 active items' art goes to `assets\icons\`, for the panel's
+   pictures. Rebuild once so they are copied next to the exe.
 3. **Active items - crop them once.** The scoreboard draws the 50 active items differently
    (round, dark, with a localized "ACTIVE"/"AKTYWNY" label), so their shop art does not match.
    When an enemy owns one, hold TAB, press **F9**, open `debug_roi.png` (next to the exe) in
@@ -234,16 +248,17 @@ cmake --build --preset release
 ctest --test-dir build --output-on-failure
 ```
 
-- `logic_tests` (110 checks): config parsing, the measured column layout, value clamping, key
+- `logic_tests` (112 checks): config parsing, the measured column layout, value clamping, key
   names, `calibration.json`, the counter database (items, heroes, builds, tips, overrides such
   as "no spirit resist vs Tankbuster"), ranking, and the per-enemy hero / item / build analysis.
-- `vision_tests` (172 checks): Unicode-safe image IO, hero template loading, then synthetic
+- `vision_tests` (265 checks): Unicode-safe image IO, hero template loading, then synthetic
   scoreboards in the real layout (27 px icons two per row in each enemy column, hero art drawn at
   0.25-0.29x from the top of the screen) with templates for all 173 items and 44 heroes, the app's
   masks and thresholds, blur, brightness shift, noise, unknown "distractor" icons, an icon between
   two columns, a hero without a template and an empty portrait box. At 1080p and 1440p every item lands in the right enemy, every hero is recognised,
   nothing unknown is reported and builds are classified correctly. Icons drawn 0.88x, 0.95x and
-  1.12x too small/large: plain search finds 0, 0 and 13 of 19 items, after F6 tuning all 19.
+  1.12x too small/large: plain search finds 0, 0 and 13 of 19 items, after F6 tuning all 19. The fast
+  scan must find exactly what the thorough search finds.
 
 Both also pass under AddressSanitizer + UndefinedBehaviorSanitizer, and the vision tests
 under ThreadSanitizer (the template search runs in parallel).
@@ -269,14 +284,17 @@ downloaded card art only:
 | Same frames resampled to 720p and 1440p | still 6 of 6 and 0 false hits, scores 0.852-0.949 |
 | 60 random game-world patches | at most 0.776, lead at most 0.282 (hence 0.80 and 0.25) |
 
-Speed (Apple M-series, 10 threads): a scan with 123 masked templates takes ~700 ms per side, of
-which all six portraits take ~60 ms; F6 tuning 5-15 s once.
+Speed (Apple M-series, one thread, whole scan with 123 templates and six portraits): ~350 ms with the
+fast scan against ~3450 ms with the thorough search (`screenshot_check --thorough`), and the same items
+found. F6 tuning takes under a second on all threads.
 
 ## Troubleshooting
 
 | Symptom | Fix |
 | --- | --- |
 | Few or no items detected, everything else looks right | Icon size mismatch: hold TAB and press F6. |
+| Game stutters when you press TAB | Check that you run the Release build (`build\`, not `build-debug\`), and try `"scan_threads": 1`. The panel's status line shows how long a scan took. |
+| Lower FPS while the panel is up | Windows composites the game with any window over it. Release TAB or unpin (F5); FPS should return as soon as the panel is gone. |
 | Panel says `no hero portraits` / `no item icons` | Run `tools\fetch_heroes.py` / `tools\fetch_icons.py`, then rebuild. |
 | An enemy shows as `(hero unknown)` | Hold TAB, press F9 and read the console: the score and the next hero's for each portrait. A skin may need its own crop (see `assets\heroes\README.txt`). |
 | `monitor_index ... does not exist` | Set `monitor_index` (0 = first monitor found, across all GPUs). It needs a restart, not just F8. |
@@ -293,7 +311,6 @@ which all six portraits take ~60 ms; F6 tuning 5-15 s once.
 
 ## Ideas for next steps
 
-- Classify the fixed item slots (two per row, 35 px apart at 1080p) instead of searching each
-  whole strip: ~100x less work than the ~600 ms masked search.
+- Mark the suggested items right on the shop screen (needs a screenshot of the shop to measure it).
 - Detect your own items as well and hide suggestions you already own.
 - Hero-vs-hero data (`/v1/analytics/hero-counter-stats`) for draft advice before the match.

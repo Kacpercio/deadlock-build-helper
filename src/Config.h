@@ -19,6 +19,7 @@ struct Hotkeys {
     int reload = 0x77;      // VK_F8
     int debugDump = 0x78;   // VK_F9
     int tuneScale = 0x75;   // VK_F6
+    int pinPanel = 0x74;    // VK_F5
 };
 
 struct AppConfig {
@@ -26,6 +27,7 @@ struct AppConfig {
     int monitorIndex = 0;
     int captureDelayMs = 250;      // let the scoreboard fade in before grabbing a frame
     int calibrationScanMs = 400;   // live rescan interval while calibrating
+    int scanThreads = 2;           // CPU threads a scan may use; every extra one is taken from the game
     Hotkeys hotkeys;
     std::filesystem::path templateDir = "assets/templates";
     std::filesystem::path countersFile = "assets/counters.json";

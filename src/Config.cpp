@@ -110,6 +110,7 @@ void validate(AppConfig& cfg)
     clampSetting(cfg.monitorIndex, 0, 16, "monitor_index");
     clampSetting(cfg.captureDelayMs, 0, 2000, "capture_delay_ms");
     clampSetting(cfg.calibrationScanMs, 100, 5000, "calibration_scan_ms");
+    clampSetting(cfg.scanThreads, 1, 64, "scan_threads");
     clampSetting(cfg.referenceHeight, 240, 4320, "reference_height");
     clampSetting(cfg.matchThreshold, 0.3, 0.999, "match_threshold");
     clampSetting(cfg.heroThreshold, 0.3, 0.999, "hero_threshold");
@@ -131,6 +132,7 @@ void parse(const nlohmann::json& j, AppConfig& cfg)
     cfg.monitorIndex = j.value("monitor_index", cfg.monitorIndex);
     cfg.captureDelayMs = j.value("capture_delay_ms", cfg.captureDelayMs);
     cfg.calibrationScanMs = j.value("calibration_scan_ms", cfg.calibrationScanMs);
+    cfg.scanThreads = j.value("scan_threads", cfg.scanThreads);
     cfg.templateDir = j.value("template_dir", cfg.templateDir.string());
     cfg.countersFile = j.value("counters_file", cfg.countersFile.string());
     cfg.referenceHeight = j.value("reference_height", cfg.referenceHeight);
@@ -148,6 +150,7 @@ void parse(const nlohmann::json& j, AppConfig& cfg)
         readKey(h, "reload", cfg.hotkeys.reload);
         readKey(h, "debug_dump", cfg.hotkeys.debugDump);
         readKey(h, "tune_scale", cfg.hotkeys.tuneScale);
+        readKey(h, "pin_panel", cfg.hotkeys.pinPanel);
     }
     if (j.contains("enemy_roi")) {
         cfg.enemyRoi = readRect(j["enemy_roi"], cfg.enemyRoi);

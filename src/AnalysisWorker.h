@@ -54,6 +54,7 @@ private:
     void tuneScale();
     std::string loadResources();
     void publishConfig(std::string summary);
+    void applyThreadLimit() const;
     void saveDebugImages(cv::Mat& frame, const cv::Rect& searchArea, const std::vector<cv::Rect>& rows,
                          const std::vector<cv::Rect>& portraits, const std::vector<Detection>& detections) const;
 

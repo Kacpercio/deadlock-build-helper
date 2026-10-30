@@ -29,6 +29,7 @@ add_executable(DeadlockBuildHelper
     ${DBH_CORE_SOURCES}
     src/ScreenCapture.cpp
     src/AnalysisWorker.cpp
+    src/PanelView.cpp
     src/Overlay.cpp
 )
 

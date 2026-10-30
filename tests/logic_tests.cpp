@@ -67,6 +67,8 @@ int main(int, char** argv)
         CHECK(near(l.config.itemCornerMask, 0.5));
         CHECK(near(l.config.heroThreshold, 0.80));
         CHECK(near(l.config.heroMargin, 0.25));
+        CHECK(l.config.scanThreads == 2);
+        CHECK(l.config.hotkeys.pinPanel == 0x74);
         CHECK(near(l.config.archetypeShare, 0.6));
         CHECK(l.config.archetypeMinItems == 3);
         CHECK(l.config.heroTemplateDir == "assets/heroes");

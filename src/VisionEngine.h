@@ -55,14 +55,21 @@ public:
     size_t templateCount() const { return templates_.size(); }
 
     // Searches only inside `roi` (full-frame pixels); returned boxes are full-frame pixels.
+    // Thorough but slow: every template against every pixel of the area, in colour.
     std::vector<Detection> detect(const cv::Mat& frameBgr, cv::Rect roi);
+
+    // Same result for scoreboard columns at a fraction of the CPU time: finds each template's best
+    // spot per column in grey at half size, and confirms it in colour only if that looks promising.
+    // Reports an item at most once per column, which is all a player can own.
+    std::vector<Detection> scan(const cv::Mat& frameBgr, const std::vector<cv::Rect>& columns);
 
     double iconScale() const { return cfg_.iconScale; }
 
     // Tries icon scales in [from, to] (coarse pass, then a fine pass around the best) and keeps
     // the one that finds the most icons, ties broken by mean score. Leaves the engine at that
     // scale; keeps the current one if nothing is found at any scale.
-    ScaleTune tuneScale(const cv::Mat& frameBgr, cv::Rect roi, double from = 0.80, double to = 1.25);
+    ScaleTune tuneScale(const cv::Mat& frameBgr, const std::vector<cv::Rect>& columns, double from = 0.80,
+                        double to = 1.25);
 
 private:
     struct Template {
@@ -71,6 +78,8 @@ private:
         cv::Mat originalMask;  // from the alpha channel; empty = every pixel counts
         cv::Mat scaled;        // resized for the current frame height, downscale and icon scale
         cv::Mat scaledMask;    // empty = unmasked (faster) matching
+        cv::Mat coarse;        // grey, half size of `scaled`: scan()'s first pass
+        cv::Mat coarseMask;
     };
 
     void prepareTemplates(int frameHeight);

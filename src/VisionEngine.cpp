@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <optional>
 
 namespace fs = std::filesystem;
 
@@ -17,6 +18,11 @@ namespace {
 // Six enemies can own the same item; anything beyond that is noise.
 constexpr int kMaxHitsPerTemplate = 8;
 constexpr double kOverlapIou = 0.3;
+
+// scan(): how far below the threshold the first pass may score and still get a colour check, and how
+// many pixels around its spot that check looks.
+constexpr double kCoarseAllowance = 0.20;
+constexpr int kConfirmSlack = 3;
 
 double iou(const cv::Rect& a, const cv::Rect& b)
 {
@@ -134,7 +140,7 @@ size_t VisionEngine::loadTemplates(const fs::path& dir)
     templates_.clear();
     scaledForHeight_ = 0;
     for (auto& file : readTemplateFolder(dir)) {
-        templates_.push_back({std::move(file.id), std::move(file.image), std::move(file.mask), {}, {}});
+        templates_.push_back({std::move(file.id), std::move(file.image), std::move(file.mask), {}, {}, {}, {}});
     }
     return templates_.size();
 }
@@ -171,12 +177,21 @@ void VisionEngine::prepareTemplates(int frameHeight)
             }
             t.scaledMask = mask;
         }
+
+        cv::Mat gray;
+        cv::cvtColor(t.scaled, gray, cv::COLOR_BGR2GRAY);
+        const cv::Size half(std::max(1, gray.cols / 2), std::max(1, gray.rows / 2));
+        cv::resize(gray, t.coarse, half, 0, 0, cv::INTER_AREA);
+        t.coarseMask.release();
+        if (!t.scaledMask.empty()) {
+            cv::resize(t.scaledMask, t.coarseMask, half, 0, 0, cv::INTER_NEAREST);
+        }
     }
     scaledForHeight_ = frameHeight;
     scaledForIconScale_ = cfg_.iconScale;
 }
 
-ScaleTune VisionEngine::tuneScale(const cv::Mat& frameBgr, cv::Rect roi, double from, double to)
+ScaleTune VisionEngine::tuneScale(const cv::Mat& frameBgr, const std::vector<cv::Rect>& columns, double from, double to)
 {
     const double original = cfg_.iconScale;
     ScaleTune best{original, 0, 0.0};
@@ -184,7 +199,7 @@ ScaleTune VisionEngine::tuneScale(const cv::Mat& frameBgr, cv::Rect roi, double 
 
     const auto tryScale = [&](double scale) {
         cfg_.iconScale = scale;
-        const std::vector<Detection> hits = detect(frameBgr, roi);
+        const std::vector<Detection> hits = scan(frameBgr, columns);
         double mean = 0.0;
         for (const auto& h : hits) {
             mean += h.score;
@@ -250,6 +265,83 @@ std::vector<Detection> VisionEngine::detect(const cv::Mat& frameBgr, cv::Rect ro
     std::vector<Detection> all;
     for (auto& hits : perTemplate) {
         all.insert(all.end(), std::make_move_iterator(hits.begin()), std::make_move_iterator(hits.end()));
+    }
+    return suppressOverlaps(std::move(all));
+}
+
+std::vector<Detection> VisionEngine::scan(const cv::Mat& frameBgr, const std::vector<cv::Rect>& columns)
+{
+    if (templates_.empty()) {
+        return {};
+    }
+    prepareTemplates(frameBgr.rows);
+
+    struct Column {
+        cv::Rect box;
+        cv::Mat search;  // colour, at `downscale`
+        cv::Mat coarse;  // grey, half of that
+    };
+    std::vector<Column> prepared;
+    for (const auto& c : columns) {
+        const cv::Rect box = c & cv::Rect(0, 0, frameBgr.cols, frameBgr.rows);
+        if (box.empty()) {
+            continue;
+        }
+        Column column{box, {}, {}};
+        cv::resize(frameBgr(box), column.search, {}, cfg_.downscale, cfg_.downscale, cv::INTER_AREA);
+        cv::cvtColor(column.search, column.coarse, cv::COLOR_BGR2GRAY);
+        cv::resize(column.coarse, column.coarse, {}, 0.5, 0.5, cv::INTER_AREA);
+        prepared.push_back(std::move(column));
+    }
+
+    const double toFrame = 1.0 / cfg_.downscale;
+    const int total = static_cast<int>(templates_.size() * prepared.size());
+    std::vector<std::optional<Detection>> hits(static_cast<size_t>(total));
+    cv::parallel_for_(cv::Range(0, total), [&](const cv::Range& range) {
+        cv::Mat response;
+        for (int n = range.start; n < range.end; ++n) {
+            const Template& t = templates_[static_cast<size_t>(n) % templates_.size()];
+            const Column& column = prepared[static_cast<size_t>(n) / templates_.size()];
+            if (t.scaled.empty() || t.scaled.cols > column.search.cols || t.scaled.rows > column.search.rows ||
+                t.coarse.cols > column.coarse.cols || t.coarse.rows > column.coarse.rows) {
+                continue;
+            }
+
+            matchNormed(column.coarse, t.coarse, t.coarseMask, response);
+            double coarseScore = 0.0;
+            cv::Point coarseAt;
+            cv::minMaxLoc(response, nullptr, &coarseScore, nullptr, &coarseAt);
+            if (coarseScore < cfg_.threshold - kCoarseAllowance) {
+                continue;
+            }
+
+            const cv::Rect window = cv::Rect(coarseAt.x * 2 - kConfirmSlack, coarseAt.y * 2 - kConfirmSlack,
+                                             t.scaled.cols + 2 * kConfirmSlack, t.scaled.rows + 2 * kConfirmSlack) &
+                                    cv::Rect(0, 0, column.search.cols, column.search.rows);
+            if (window.width < t.scaled.cols || window.height < t.scaled.rows) {
+                continue;
+            }
+            matchNormed(column.search(window), t.scaled, t.scaledMask, response);
+            double score = 0.0;
+            cv::Point at;
+            cv::minMaxLoc(response, nullptr, &score, nullptr, &at);
+            if (score >= cfg_.threshold) {
+                hits[static_cast<size_t>(n)] = Detection{
+                    t.id,
+                    cv::Rect(column.box.x + static_cast<int>((window.x + at.x) * toFrame),
+                             column.box.y + static_cast<int>((window.y + at.y) * toFrame),
+                             static_cast<int>(t.scaled.cols * toFrame), static_cast<int>(t.scaled.rows * toFrame)),
+                    score,
+                };
+            }
+        }
+    });
+
+    std::vector<Detection> all;
+    for (auto& hit : hits) {
+        if (hit) {
+            all.push_back(std::move(*hit));
+        }
     }
     return suppressOverlaps(std::move(all));
 }

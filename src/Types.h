@@ -25,19 +25,25 @@ struct EnemyItem {
 // Everything known about one enemy's scoreboard row.
 struct EnemyPlayer {
     int slot = 0;
-    std::string hero;    // display name, empty if the portrait was not recognised
+    std::string heroId;  // empty if the portrait was not recognised
+    std::string hero;    // display name
     std::string build;   // "Gun build" / "Spirit build" / "Tank build" / "Hybrid", empty with few items
     int weaponItems = 0;
     int spiritItems = 0;
     int vitalityItems = 0;
-    std::vector<std::string> items;  // display names
+    std::vector<std::string> itemIds;
+    std::vector<std::string> items;  // display names, same order as itemIds
     std::vector<std::string> tips;   // how to play against their items
     std::vector<std::string> avoid;  // items that do badly against their hero
 };
 
 // A recommended purchase. `answers` lists what it counters (items, heroes, builds).
 struct Suggestion {
-    std::string item;
+    std::string item;    // display name
+    std::string itemId;  // empty if counters.json does not list the item itself
+    std::string slot;    // shop tab: "weapon" / "vitality" / "spirit"
+    int tier = 0;
+    int cost = 0;        // souls; 0 = unknown
     std::string reason;
     int score = 0;
     std::vector<std::string> answers;

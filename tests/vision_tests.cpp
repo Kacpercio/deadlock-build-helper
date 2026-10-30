@@ -298,20 +298,28 @@ int main(int, char** argv)
 
         if (tune) {
             const auto t = std::chrono::steady_clock::now();
-            r.tunedScale = vision.tuneScale(frame, searchArea).scale;
+            r.tunedScale = vision.tuneScale(frame, rows).scale;
             heroes.setIconScale(r.tunedScale);  // portraits are drawn at the same UI scale
             r.tuneMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
         }
 
         auto t0 = std::chrono::steady_clock::now();
-        std::vector<Detection> detections = vision.detect(frame, searchArea);
+        std::vector<Detection> detections = vision.scan(frame, rows);
         r.detectMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 
-        for (const auto& d : detections) {
+        // The thorough search sees the whole area, including the icon between two columns...
+        std::vector<Detection> thorough = vision.detect(frame, searchArea);
+        for (const auto& d : thorough) {
             const cv::Point c(d.box.x + d.box.width / 2, d.box.y + d.box.height / 2);
             if (c.x >= rows[0].br().x && c.x < rows[1].x) ++r.gapHits;
         }
+        // ...and within the columns the fast scan finds exactly the same.
+        assignToRows(thorough, rows);
+        std::multiset<std::string> thoroughIds, scanIds;
+        for (const auto& d : thorough) thoroughIds.insert(std::format("{}/{}", d.slot, d.itemId));
         assignToRows(detections, rows);
+        for (const auto& d : detections) scanIds.insert(std::format("{}/{}", d.slot, d.itemId));
+        CHECK(scanIds == thoroughIds);
         for (const auto& d : detections) {
             if (d.slot == 5) ++r.distractorHits;
             r.itemsPerRow[d.slot].insert(d.itemId);
@@ -371,6 +379,13 @@ int main(int, char** argv)
             CHECK(!r.players[0].tips.empty() && !r.players[0].avoid.empty());
         }
         CHECK(r.suggestions.size() == static_cast<size_t>(cfg.maxSuggestions));
+        for (const auto& s : r.suggestions) {
+            CHECK(!s.itemId.empty() && !s.slot.empty() && s.tier >= 1);
+            CHECK(s.tier > 4 ? s.cost == 0 : s.cost == 800 * (1 << (s.tier - 1)));
+        }
+        for (const auto& p : r.players) {
+            CHECK(p.items.size() == p.itemIds.size());
+        }
 
     };
 
