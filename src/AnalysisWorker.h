@@ -35,6 +35,9 @@ public:
     // Loads templates and counters described by `cfg` before the thread starts.
     AnalysisWorker(ScreenCapture& capture, AppConfig cfg, std::filesystem::path root);
 
+    // Gets the capture ready, so that a scan requested shortly after does not have to.
+    void requestPrepare();
+
     // Queues one scan. Requests arriving while a scan runs are merged into the next one.
     void requestScan(bool saveDebugImages);
 
@@ -88,6 +91,7 @@ private:
     bool pendingDebug_ = false;
     bool pendingReload_ = false;
     bool pendingTune_ = false;
+    bool pendingPrepare_ = false;
     std::optional<AppConfig> pendingSettings_;
     bool pendingResetSettings_ = false;
     std::optional<int> pendingPick_;

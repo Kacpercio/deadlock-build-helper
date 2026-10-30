@@ -37,13 +37,20 @@ struct EnemyPlayer {
     std::vector<std::string> avoid;  // items that do badly against their hero
 };
 
+// When to buy something, going by how far along you are.
+enum class BuyTiming { Unknown, Now, Next, Later };
+
 // A recommended purchase. `answers` lists what it counters (items, heroes, builds).
 struct Suggestion {
     std::string item;    // display name
     std::string itemId;  // empty if counters.json does not list the item itself
     std::string slot;    // shop tab: "weapon" / "vitality" / "spirit"
     int tier = 0;
-    int cost = 0;        // souls; 0 = unknown
+    int cost = 0;        // souls still to pay: less what you own of it; 0 = unknown
+    BuyTiming timing = BuyTiming::Unknown;
+    int buyMinute = 0;   // the match minute players usually buy it at; 0 = unknown
+    std::string upgrades;                // the item you own that this one builds on
+    std::vector<std::string> buildFrom;  // cheaper items it builds on, which you don't own yet
     std::string reason;
     int score = 0;
     std::vector<std::string> answers;
@@ -63,6 +70,7 @@ struct AnalysisResult {
     int mySlot = -1;            // your column on your team, -1 = not found on the scoreboard
     std::string myHero;         // display name, empty if not recognised
     size_t myItems = 0;         // what you own is left out of the suggestions
+    int mySouls = 0;            // what those items cost
 
     // Top of the frame this came from (holds the scoreboard), and the frame's full size.
     cv::Mat preview;

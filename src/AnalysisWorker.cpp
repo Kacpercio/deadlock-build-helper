@@ -48,6 +48,15 @@ void AnalysisWorker::requestScan(bool saveDebugImages)
     wake_.notify_one();
 }
 
+void AnalysisWorker::requestPrepare()
+{
+    {
+        std::lock_guard lock(mutex_);
+        pendingPrepare_ = true;
+    }
+    wake_.notify_one();
+}
+
 void AnalysisWorker::requestSettings(AppConfig settings)
 {
     {
@@ -127,14 +136,15 @@ void AnalysisWorker::run(std::stop_token stop)
         bool debug = false;
         bool reloadFirst = false;
         bool tune = false;
+        bool prepare = false;
         bool resetSettingsFile = false;
         std::optional<AppConfig> settings;
         std::optional<int> pick;
         {
             std::unique_lock lock(mutex_);
             const auto pending = [this] {
-                return pendingScan_ || pendingReload_ || pendingTune_ || pendingSettings_ || pendingResetSettings_ ||
-                       pendingPick_;
+                return pendingScan_ || pendingReload_ || pendingTune_ || pendingPrepare_ || pendingSettings_ ||
+                       pendingResetSettings_ || pendingPick_;
             };
             if (!wake_.wait_for(lock, stop, kKeepCaptureOpen, pending)) {
                 if (stop.stop_requested()) {
@@ -150,9 +160,14 @@ void AnalysisWorker::run(std::stop_token stop)
             reloadFirst = pendingReload_;
             tune = pendingTune_;
             pendingScan_ = pendingDebug_ = pendingReload_ = pendingTune_ = false;
+            prepare = std::exchange(pendingPrepare_, false);
             resetSettingsFile = std::exchange(pendingResetSettings_, false);
             settings = std::exchange(pendingSettings_, std::nullopt);
             pick = std::exchange(pendingPick_, std::nullopt);
+        }
+
+        if (prepare) {
+            capture_.prepare();
         }
 
         const fs::path configFile = root_ / "assets" / "config.json";
@@ -308,6 +323,9 @@ void AnalysisWorker::addMe(const cv::Mat& frame, AnalysisResult& result, Suggest
         input.owned.insert(d.itemId);
     }
     result.myItems = mine.size();
+    for (const auto& d : mine) {
+        result.mySouls += counters_.costOf(d.itemId);
+    }
     if (slot < portraits.size()) {
         if (const HeroVerdict v = heroes_.recognize(frame, portraits[slot]); v.accepted) {
             result.myHero = counters_.heroName(v.id);
@@ -361,6 +379,16 @@ AnalysisResult AnalysisWorker::analyze(bool debug)
         result.enemyItems.push_back({id, counters_.displayName(id), n});
     }
     std::ranges::stable_sort(result.enemyItems, std::greater{}, &EnemyItem::count);
+    // How far along you are: your own items, or if unknown what the average enemy owns.
+    input.spentSouls = result.mySlot >= 0 ? result.mySouls : 0;
+    if (result.mySlot < 0 && !result.players.empty()) {
+        for (const auto& p : result.players) {
+            for (const auto& id : p.itemIds) {
+                input.spentSouls += counters_.costOf(id);
+            }
+        }
+        input.spentSouls /= static_cast<int>(result.players.size());
+    }
     result.suggestions = counters_.suggest(input, static_cast<size_t>(cfg_.maxSuggestions));
     result.elapsedMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 

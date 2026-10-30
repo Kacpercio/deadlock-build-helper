@@ -39,12 +39,14 @@ constexpr size_t kMaxTipsPerPlayer = 1;
 struct Detail {
     bool wrap;          // long text may take several lines, instead of one cut short
     size_t maxAvoid;    // items listed in each enemy's "avoid" line
+    bool howToBuy;      // show what an item builds on
 };
 constexpr Detail kDetailLevels[] = {
-    {true, 3},
-    {true, 1},
-    {false, 1},
-    {false, 0},
+    {true, 3, true},
+    {true, 1, true},
+    {false, 1, true},
+    {false, 1, false},
+    {false, 0, false},
 };
 
 ImU32 slotColor(std::string_view slot)
@@ -69,6 +71,25 @@ ImU32 buildColor(std::string_view build)
     if (build == "Tank build") return kVitality;
     if (build == "Spirit build") return kSpirit;
     return kMuted;
+}
+
+const char* timingLabel(BuyTiming timing)
+{
+    switch (timing) {
+    case BuyTiming::Now: return "NOW";
+    case BuyTiming::Next: return "NEXT";
+    case BuyTiming::Later: return "LATER";
+    default: return "";
+    }
+}
+
+ImU32 timingColor(BuyTiming timing)
+{
+    switch (timing) {
+    case BuyTiming::Now: return kVitality;
+    case BuyTiming::Next: return kAccent;
+    default: return kMuted;
+    }
 }
 
 ImU32 withAlpha(ImU32 color, int alpha)
@@ -202,7 +223,18 @@ void drawSuggestion(Canvas& c, const Suggestion& s, const PanelIcons& icons, con
     const float x = c.left() + iconSize + c.px(kGap);
     const float wrap = c.left() + c.width() - x;
     float line = top - c.px(1.0f);
-    line += c.text(ImVec2(x, line), true, kBody, kText, s.item);
+    const float nameHeight = c.text(ImVec2(x, line), true, kBody, kText, s.item);
+
+    // When to buy it, at the far end of the name's line.
+    if (const std::string_view timing = timingLabel(s.timing); !timing.empty() && c.drawing()) {
+        const ImVec2 size = c.measure(true, kSmall, timing);
+        const float pad = c.px(5.0f);
+        const ImVec2 at(c.left() + c.width() - size.x - pad, line + (nameHeight - size.y) * 0.5f);
+        c.list()->AddRectFilled(ImVec2(at.x - pad, at.y), ImVec2(at.x + size.x + pad, at.y + size.y),
+                                withAlpha(timingColor(s.timing), 50), size.y * 0.5f);
+        c.text(at, true, kSmall, timingColor(s.timing), timing);
+    }
+    line += nameHeight;
 
     // "Spirit T4   6400", the shop tab first: that is where to look.
     float metaX = x;
@@ -214,15 +246,20 @@ void drawSuggestion(Canvas& c, const Suggestion& s, const PanelIcons& icons, con
         c.text(ImVec2(metaX, line), false, kSmall, kMuted, cost);
         metaX += c.measure(false, kSmall, cost).x + c.px(8.0f);
     }
-    if (s.answers.size() > 1) {
-        const std::string answers = std::format("counters {}", s.answers.size());
-        const ImVec2 size = c.measure(false, kSmall, answers);
+    if (s.buyMinute > 0) {
+        const std::string minute = std::format("usually min {}", s.buyMinute);
+        const ImVec2 size = c.measure(false, kSmall, minute);
         const float right = c.left() + c.width();
         if (right - size.x > metaX) {
-            c.text(ImVec2(right - size.x, line), false, kSmall, kAccent, answers);
+            c.text(ImVec2(right - size.x, line), false, kSmall, kMuted, minute);
         }
     }
     line += metaHeight;
+    if (detail.howToBuy && !s.upgrades.empty()) {
+        line += c.longText(ImVec2(x, line), kVitality, "Upgrades your " + s.upgrades, wrap, detail);
+    } else if (detail.howToBuy && !s.buildFrom.empty()) {
+        line += c.longText(ImVec2(x, line), kTip, "Cheaper after " + join(s.buildFrom), wrap, detail);
+    }
     if (const std::string_view reason = reasonText(s.reason); !reason.empty()) {
         line += c.longText(ImVec2(x, line), kMuted, reason, wrap, detail);
     }
@@ -300,7 +337,15 @@ void layout(Canvas& c, const PanelModel& model, const PanelIcons& icons, const D
     }
     c.advance(c.px(8.0f));
 
-    c.heading("BUY NEXT");
+    if (!model.newPurchases.empty()) {
+        c.heading("NEW SINCE LAST LOOK");
+        for (const auto& line : model.newPurchases) {
+            c.advance(c.longText(ImVec2(c.left(), c.y()), kAvoid, line, inner, detail));
+        }
+        c.advance(c.px(8.0f));
+    }
+
+    c.heading("BUY ORDER");
     if (model.suggestions.empty()) {
         c.advance(c.text(ImVec2(c.left(), c.y()), false, kSmall, kMuted, "Nothing to counter yet.") + c.px(kRowGap));
     }
@@ -331,6 +376,32 @@ void layout(Canvas& c, const PanelModel& model, const PanelIcons& icons, const D
 }
 
 }  // namespace
+
+void drawReminder(const Suggestion& next, ImVec2 pos, float width, const PanelStyle& style, const PanelIcons& icons)
+{
+    ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0.0f), ImVec2(width, FLT_MAX));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, kBackground);
+    ImGui::PushStyleColor(ImGuiCol_Border, kBorder);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f * style.scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(kPadding * style.scale, kPadding * style.scale));
+
+    constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                                       ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings |
+                                       ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
+    if (ImGui::Begin("##reminder", nullptr, flags)) {
+        const float inner = width - 2.0f * kPadding * style.scale;
+        Canvas c(ImGui::GetCursorScreenPos(), inner, style, true);
+        c.heading("TIME TO BUY");
+        drawSuggestion(c, next, icons, kDetailLevels[0]);
+        c.advance(c.text(ImVec2(c.left(), c.y()), false, kSmall, kMuted, "Hold TAB to look at the enemies again."));
+        ImGui::Dummy(ImVec2(inner, c.used()));
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor(2);
+}
 
 void drawPanel(const PanelModel& model, ImVec2 pos, float width, float maxHeight, const PanelStyle& style,
                const PanelIcons& icons)

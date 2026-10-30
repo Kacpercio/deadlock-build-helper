@@ -1,5 +1,6 @@
 #include "AnalysisWorker.h"
 #include "Config.h"
+#include "PlayerAnalysis.h"
 #include "Overlay.h"
 #include "ScreenCapture.h"
 #include "SettingsMenu.h"
@@ -18,6 +19,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
@@ -109,6 +111,8 @@ std::string statusLine(const AnalysisResult& r, bool busy)
                        r.elapsedMs, r.warning.empty() ? "" : " | ", r.warning);
 }
 
+constexpr int kReminderSeconds = 8;
+
 std::string aboutYou(const AnalysisResult& r)
 {
     if (!r.nicknameSet || r.version == 0) {
@@ -117,7 +121,8 @@ std::string aboutYou(const AnalysisResult& r)
     if (r.mySlot < 0) {
         return "You: not found on the scoreboard";
     }
-    return std::format("You: {}, {} items owned", r.myHero.empty() ? "hero not recognised" : r.myHero, r.myItems);
+    return std::format("You: {}, {} items owned ({} souls)", r.myHero.empty() ? "hero not recognised" : r.myHero, r.myItems,
+                       r.mySouls);
 }
 
 std::string calibrationBanner(const Hotkeys& keys)
@@ -188,8 +193,15 @@ int main()
         menuOpen = false;
     };
 
-    bool scannedThisPress = false;
+    int scansThisPress = 0;
     bool calibrating = false;
+    Clock::time_point panelHeldUntil{};
+    std::vector<EnemyPlayer> playersAtLastPress;  // to tell what enemies bought since then
+    std::vector<std::string> purchases;
+    Clock::time_point reminderDue = Clock::time_point::max();
+    Clock::time_point reminderUntil{};
+    Clock::time_point remindersStop{};
+    std::optional<Suggestion> reminder;
     Clock::time_point scoreboardDownSince{};
     Clock::time_point lastScan{};
     Clock::time_point lastTopmost = Clock::now();
@@ -220,18 +232,28 @@ int main()
         const bool gameFocused = !menuOpen && isGameForeground(gameTitle);
         const bool scoreboardDown = gameFocused && keyDown(cfg.hotkeys.scoreboard);
 
-        // One scan per scoreboard press, once it has had time to fade in.
+        // Two looks per scoreboard press: a quick one, so a short tap is enough, and a surer one if the
+        // key is still down, since the first can catch the scoreboard fading in.
         if (scoreboardKey.pressed(scoreboardDown)) {
             scoreboardDownSince = now;
-            scannedThisPress = false;
+            scansThisPress = 0;
+            worker.requestPrepare();
+            playersAtLastPress = shown.players;
+            purchases.clear();
+            reminder.reset();
         }
-        if (scoreboardDown && !scannedThisPress && now - scoreboardDownSince >= milliseconds(cfg.captureDelayMs)) {
+        const auto heldFor = now - scoreboardDownSince;
+        if (scoreboardDown && ((scansThisPress == 0 && heldFor >= milliseconds(cfg.captureDelayMs)) ||
+                               (scansThisPress == 1 && heldFor >= milliseconds(cfg.captureDelayMs + cfg.rescanDelayMs)))) {
             worker.requestScan(false);
-            scannedThisPress = true;
+            ++scansThisPress;
             lastScan = now;
         }
+        if (scoreboardDown) {
+            panelHeldUntil = now + milliseconds(cfg.panelHoldMs);
+        }
         // While calibrating, keep rescanning so edits to the rows/threshold show up immediately.
-        if (calibrating && scoreboardDown && scannedThisPress && !worker.busy() &&
+        if (calibrating && scoreboardDown && scansThisPress >= 2 && !worker.busy() &&
             now - lastScan >= milliseconds(cfg.calibrationScanMs)) {
             worker.requestScan(false);
             lastScan = now;
@@ -283,8 +305,21 @@ int main()
         }
 
         if (auto fresh = worker.takeIfNewer(shown.version)) {
-            shown = std::move(*fresh);
+            // A look that saw nothing at all (the scoreboard was already gone) changes nothing.
+            if (fresh->detections.empty() && !shown.detections.empty() && fresh->error.empty()) {
+                shown.version = fresh->version;
+            } else {
+                shown = std::move(*fresh);
+                purchases = newPurchases(playersAtLastPress, shown.players);
+            }
             pickedSlot.reset();
+
+            // The next reminder counts from now, and they stop once scans have stopped for a while:
+            // the match is probably over.
+            if (cfg.reminderMinutes > 0) {
+                reminderDue = now + std::chrono::minutes(cfg.reminderMinutes);
+                remindersStop = now + std::chrono::minutes(5 * cfg.reminderMinutes);
+            }
         }
 
         if (gameFocused && now - lastTopmost > std::chrono::seconds(2)) {
@@ -292,13 +327,32 @@ int main()
             lastTopmost = now;
         }
 
+        if (cfg.reminderMinutes > 0 && now >= reminderDue) {
+            reminderDue = now + std::chrono::minutes(cfg.reminderMinutes);
+            const auto next = std::ranges::find_if(shown.suggestions, [](const Suggestion& s) {
+                return s.timing == BuyTiming::Now;
+            });
+            if (gameFocused && now < remindersStop && next != shown.suggestions.end()) {
+                reminder = *next;
+                reminderUntil = now + std::chrono::seconds(kReminderSeconds);
+            }
+        }
+        if (reminder && now >= reminderUntil) {
+            reminder.reset();
+        }
+
         OverlayModel model;
-        // Pinned, the last result stays up after TAB is released, for instance over the shop.
-        model.visible = scoreboardDown || (pinned && gameFocused && shown.version > 0);
+        // The last result stays up for a while after TAB is released, or for good when pinned, for
+        // instance over the shop.
+        model.visible = scoreboardDown || (gameFocused && shown.version > 0 && (pinned || now < panelHeldUntil));
+        if (gameFocused && !model.visible) {
+            model.reminder = reminder;
+        }
         model.calibrating = calibrating && gameFocused;
         if (model.visible || model.calibrating) {
             model.panel.status = now < noticeUntil ? notice : statusLine(shown, worker.busy());
             model.panel.you = aboutYou(shown);
+            model.panel.newPurchases = purchases;
             model.panel.pinned = pinned;
             model.panel.perPlayer = cfg.enemyRows.size() > 1;
             model.panel.enemyItems = shown.enemyItems;
@@ -306,6 +360,8 @@ int main()
             model.panel.suggestions = shown.suggestions;
             model.revision = std::format("{} {} {} {} {}", shown.version, configVersion, model.calibrating, pinned,
                                          model.panel.status);
+        } else if (model.reminder) {
+            model.revision = "reminder " + model.reminder->item;
             model.panelX = static_cast<float>(cfg.panelX);
             model.panelY = static_cast<float>(cfg.panelY);
         }

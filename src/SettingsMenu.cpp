@@ -270,6 +270,8 @@ void SettingsMenu::drawRecognition(MenuActions& actions)
     actions.apply = sliderDouble("Hero lead over the next-best", edited_.heroMargin, 0.05, 0.60, "%.2f") || actions.apply;
     actions.apply = sliderInt("Scan threads (more = quicker scan, less for the game)", edited_.scanThreads, 1, 8) || actions.apply;
     actions.apply = sliderInt("Wait after pressing TAB (ms)", edited_.captureDelayMs, 0, 1000) || actions.apply;
+    actions.apply = sliderInt("Keep the panel after TAB (ms)", edited_.panelHoldMs, 0, 20000) || actions.apply;
+    actions.apply = sliderInt("Buying reminder every (minutes, 0 = off)", edited_.reminderMinutes, 0, 15) || actions.apply;
     actions.apply = sliderInt("Suggestions shown", edited_.maxSuggestions, 3, 10) || actions.apply;
 }
 

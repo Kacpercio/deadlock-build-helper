@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -23,6 +24,7 @@ struct OverlayModel {
     std::function<void()> menu;  // set: the settings menu is open and takes the mouse and keyboard
     std::string revision;      // changes whenever the content below does; nothing is redrawn otherwise
     PanelModel panel;
+    std::optional<Suggestion> reminder;  // a note about the next purchase, when the panel is not up
     float panelX = 0.02f;  // panel top-left corner, normalized to the monitor
     float panelY = 0.30f;
 

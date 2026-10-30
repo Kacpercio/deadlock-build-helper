@@ -15,6 +15,7 @@ struct SuggestInput {
     std::map<std::string, int> heroes;      // hero id -> number of enemies playing it
     std::map<std::string, int> archetypes;  // "weapon" / "spirit" / "vitality" -> number of such builds
     std::set<std::string> owned;            // item ids you already have: never suggested
+    int spentSouls = -1;                    // how far along you are, in souls spent; -1 = unknown
 };
 
 // counters.json: enemy items, enemy build archetypes and enemy heroes, each mapped to the
@@ -34,10 +35,12 @@ public:
 
     // "weapon" / "spirit" / "vitality", empty if unknown.
     std::string slotOf(const std::string& itemId) const;
+    int costOf(const std::string& itemId) const;  // 0 if unknown
     std::string tipFor(const std::string& itemId) const;
     std::vector<std::string> avoidAgainst(const std::string& heroId) const;
 
     // Score of a counter = sum over what it answers of (count x entry weight x counter priority).
+    // The best ones by score come back in buying order when input.spentSouls is known.
     std::vector<Suggestion> suggest(const SuggestInput& input, size_t maxResults) const;
 
 private:
@@ -52,6 +55,8 @@ private:
         std::vector<Counter> counters;
         std::string slot;
         int tier = 0;
+        int buyMinute = 0;
+        std::vector<std::string> components;  // ids of the cheaper items it builds on
         std::string tip;
         std::vector<std::string> avoid;
     };

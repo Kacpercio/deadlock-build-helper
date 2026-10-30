@@ -111,6 +111,9 @@ void validate(AppConfig& cfg)
     clampSetting(cfg.captureDelayMs, 0, 2000, "capture_delay_ms");
     clampSetting(cfg.calibrationScanMs, 100, 5000, "calibration_scan_ms");
     clampSetting(cfg.scanThreads, 1, 64, "scan_threads");
+    clampSetting(cfg.rescanDelayMs, 50, 5000, "rescan_delay_ms");
+    clampSetting(cfg.panelHoldMs, 0, 60000, "panel_hold_ms");
+    clampSetting(cfg.reminderMinutes, 0, 60, "reminder_minutes");
     clampSetting(cfg.referenceHeight, 240, 4320, "reference_height");
     clampSetting(cfg.matchThreshold, 0.3, 0.999, "match_threshold");
     clampSetting(cfg.heroThreshold, 0.3, 0.999, "hero_threshold");
@@ -133,6 +136,9 @@ void parse(const nlohmann::json& j, AppConfig& cfg)
     cfg.captureDelayMs = j.value("capture_delay_ms", cfg.captureDelayMs);
     cfg.calibrationScanMs = j.value("calibration_scan_ms", cfg.calibrationScanMs);
     cfg.scanThreads = j.value("scan_threads", cfg.scanThreads);
+    cfg.rescanDelayMs = j.value("rescan_delay_ms", cfg.rescanDelayMs);
+    cfg.panelHoldMs = j.value("panel_hold_ms", cfg.panelHoldMs);
+    cfg.reminderMinutes = j.value("reminder_minutes", cfg.reminderMinutes);
     cfg.templateDir = j.value("template_dir", cfg.templateDir.string());
     cfg.countersFile = j.value("counters_file", cfg.countersFile.string());
     cfg.referenceHeight = j.value("reference_height", cfg.referenceHeight);
@@ -182,6 +188,8 @@ nlohmann::json menuSettings(const AppConfig& cfg)
     nlohmann::json j{
         {"capture_delay_ms", cfg.captureDelayMs},
         {"scan_threads", cfg.scanThreads},
+        {"panel_hold_ms", cfg.panelHoldMs},
+        {"reminder_minutes", cfg.reminderMinutes},
         {"match_threshold", cfg.matchThreshold},
         {"hero_threshold", cfg.heroThreshold},
         {"hero_margin", cfg.heroMargin},

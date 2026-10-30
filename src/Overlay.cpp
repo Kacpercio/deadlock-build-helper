@@ -364,7 +364,7 @@ void Overlay::keepOnTop()
 void Overlay::render(const OverlayModel& model)
 {
     const bool menuOpen = static_cast<bool>(model.menu);
-    const bool hasContent = model.visible || model.calibrating || menuOpen;
+    const bool hasContent = model.visible || model.calibrating || menuOpen || model.reminder.has_value();
 
     // Nothing on screen now and nothing last frame: skip the GPU work entirely.
     if (!hasContent && !lastFrameHadContent_) {
@@ -430,7 +430,11 @@ void Overlay::drawPanelView(const OverlayModel& model)
     const ImVec2 pos = model.calibrating ? ImVec2(monitorWidth * model.panelX, monitorHeight * model.panelY) : ImVec2(0.0f, 0.0f);
     const PanelIcons icons{[this](const std::string& id) { return icon(id, false); },
                            [this](const std::string& id) { return icon(id, true); }};
-    drawPanel(model.panel, pos, monitorWidth * kPanelWidth, monitorHeight * (1.0f - model.panelY) - 2.0f, panelStyle_, icons);
+    if (model.visible || model.calibrating) {
+        drawPanel(model.panel, pos, monitorWidth * kPanelWidth, monitorHeight * (1.0f - model.panelY) - 2.0f, panelStyle_, icons);
+    } else if (model.reminder) {
+        drawReminder(*model.reminder, pos, monitorWidth * kPanelWidth, panelStyle_, icons);
+    }
 }
 
 void Overlay::drawCalibration(const OverlayModel& model)

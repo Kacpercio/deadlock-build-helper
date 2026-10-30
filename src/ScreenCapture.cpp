@@ -3,6 +3,7 @@
 #include <opencv2/imgproc.hpp>
 
 #include <iostream>
+#include <utility>
 
 using Microsoft::WRL::ComPtr;
 
@@ -17,6 +18,13 @@ ScreenCapture::ScreenCapture(int monitorIndex)
 {
     if (!initialize()) {
         std::cerr << "[capture] could not start Desktop Duplication on monitor " << monitorIndex_ << '\n';
+    }
+}
+
+void ScreenCapture::prepare()
+{
+    if (!duplication_) {
+        initialize();
     }
 }
 
@@ -85,14 +93,14 @@ bool ScreenCapture::initialize()
         reset();
         return false;
     }
+    justOpened_ = true;
     return true;
 }
 
 std::optional<cv::Mat> ScreenCapture::grab(unsigned timeoutMs)
 {
     for (int attempt = 0; attempt < 2; ++attempt) {
-        const bool justOpened = !duplication_;
-        if (justOpened && !initialize()) {
+        if (!duplication_ && !initialize()) {
             return std::nullopt;
         }
 
@@ -120,7 +128,7 @@ std::optional<cv::Mat> ScreenCapture::grab(unsigned timeoutMs)
 
         // The first image of a new duplication may predate it, or be blank on some drivers. A game
         // presents again within milliseconds, so take the next one when there is one.
-        if (justOpened) {
+        if (std::exchange(justOpened_, false)) {
             ComPtr<IDXGIResource> next;
             if (SUCCEEDED(duplication_->AcquireNextFrame(kSecondFrameWaitMs, &info, &next))) {
                 copied = copyToMat(next.Get()) || copied;

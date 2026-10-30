@@ -37,12 +37,12 @@ static int checks = 0;
     } while (0)
 
 // Measured on a real 1080p scoreboard: 27 px item icons, two per row, 35 px apart, starting
-// 10 px right of / 22 px below the top-left of each item box; hero card art (280x380) starts at the
+// 10 px right of / 38 px below the top-left of each item box; hero card art (280x380) starts at the
 // top of the screen, 5 px into the portrait box, drawn at 0.25-0.29x.
 constexpr int kIcon = 27;
 constexpr int kPitch = 35;
 constexpr int kOffsetX = 10;
-constexpr int kOffsetY = 22;
+constexpr int kOffsetY = 38;
 const cv::Size kArt(280, 380);
 constexpr int kArtOffsetX = 5;
 constexpr int kRefHeight = 1080;

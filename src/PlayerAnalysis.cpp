@@ -164,6 +164,25 @@ std::vector<HeroVerdict> addHeroes(const HeroRecognizer& heroes, const cv::Mat& 
     return verdicts;
 }
 
+std::vector<std::string> newPurchases(const std::vector<EnemyPlayer>& before, const std::vector<EnemyPlayer>& after)
+{
+    std::vector<std::string> lines;
+    for (const auto& now : after) {
+        const auto was = std::ranges::find_if(before, [&](const EnemyPlayer& p) {
+            return p.slot == now.slot && p.heroId == now.heroId;
+        });
+        if (was == before.end() || now.heroId.empty()) {
+            continue;
+        }
+        for (size_t i = 0; i < now.itemIds.size(); ++i) {
+            if (std::ranges::find(was->itemIds, now.itemIds[i]) == was->itemIds.end()) {
+                lines.push_back(now.hero + " bought " + now.items[i]);
+            }
+        }
+    }
+    return lines;
+}
+
 std::vector<EnemyPlayer> describePlayers(const std::vector<Detection>& detections, size_t rowCount,
                                          const CounterDatabase& counters, const ArchetypeRule& rule,
                                          SuggestInput& input)

@@ -1,7 +1,13 @@
 {
   "game_window_title": "Deadlock",
   "monitor_index": 0,
-  "capture_delay_ms": 250,
+  // TAB: first look at the scoreboard after capture_delay_ms, a second look rescan_delay_ms later if
+  // TAB is still down (the first can catch it fading in). The panel stays panel_hold_ms after release.
+  "capture_delay_ms": 120,
+  "rescan_delay_ms": 300,
+  "panel_hold_ms": 5000,
+  // Reminds you of the next purchase this many minutes after a scan. 0 = no reminders.
+  "reminder_minutes": 3,
   "calibration_scan_ms": 400,
   // CPU threads a scan may use. More makes the scan quicker, but takes them from the game.
   "scan_threads": 2,
@@ -47,7 +53,7 @@
   // One box per ENEMY player's item strip; "first" is the enemy closest to the centre, the
   // others are stepped right by step_x. Check them in calibration mode (F7), apply edits with F8.
   "enemy_rows": {
-    "first": { "x": 0.5555, "y": 0.2890, "w": 0.0417, "h": 0.2856 },
+    "first": { "x": 0.5555, "y": 0.2741, "w": 0.0417, "h": 0.3005 },
     "count": 6,
     "step_x": 0.04586,
     "step_y": 0.0

@@ -32,6 +32,9 @@ public:
     // (resolution change, fullscreen toggle, UAC prompt).
     std::optional<cv::Mat> grab(unsigned timeoutMs = 500);
 
+    // Opens the duplication ahead of grab(), which then has nothing to wait for.
+    void prepare();
+
     // Stops duplicating until the next grab(). An open duplication makes Windows keep compositing
     // the desktop for it, which costs the game frames even when nothing is being read.
     void suspend();
@@ -49,4 +52,5 @@ private:
     Microsoft::WRL::ComPtr<IDXGIOutputDuplication> duplication_;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> staging_;
     cv::Mat lastFrame_;
+    bool justOpened_ = false;
 };

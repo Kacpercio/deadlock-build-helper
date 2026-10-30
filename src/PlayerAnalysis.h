@@ -52,6 +52,10 @@ NameTemplate loadNameTemplate(const std::filesystem::path& file);
 int findName(const cv::Mat& frameBgr, const std::vector<cv::Rect>& boxes, const NameTemplate& name,
              double* score = nullptr);
 
+// One line per item an enemy owns on this scan but did not on `before`, such as "Haze bought Metal
+// Skin". Only compares the same hero in the same column.
+std::vector<std::string> newPurchases(const std::vector<EnemyPlayer>& before, const std::vector<EnemyPlayer>& after);
+
 // Turns one scan's detections (items and hero portraits, each with its row in `slot`) into one
 // EnemyPlayer per row that showed anything, and fills `input` for CounterDatabase::suggest.
 std::vector<EnemyPlayer> describePlayers(const std::vector<Detection>& detections, size_t rowCount,

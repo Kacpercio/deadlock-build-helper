@@ -20,6 +20,17 @@ int costOfTier(int tier)
     }
 }
 
+// What you can reasonably save up for, by what you have spent so far: tier 1-2 in the lane, tier 3
+// once you own a few items, tier 4 late. The next tier up is "next", anything above "later".
+BuyTiming timingOf(int tier, int spentSouls)
+{
+    if (spentSouls < 0 || tier <= 0) {
+        return BuyTiming::Unknown;
+    }
+    const int nowUpToTier = spentSouls < 3000 ? 2 : spentSouls < 15000 ? 3 : 4;
+    return tier <= nowUpToTier ? BuyTiming::Now : tier == nowUpToTier + 1 ? BuyTiming::Next : BuyTiming::Later;
+}
+
 template <typename Table>
 Table parseSection(const nlohmann::json& root, const char* section)
 {
@@ -33,6 +44,8 @@ Table parseSection(const nlohmann::json& root, const char* section)
         entry.weight = node.value("weight", 1);
         entry.slot = node.value("slot", std::string{});
         entry.tier = node.value("tier", 0);
+        entry.buyMinute = node.value("buy_minute", 0);
+        entry.components = node.value("components", std::vector<std::string>{});
         entry.tip = node.value("tip", std::string{});
         entry.avoid = node.value("avoid", std::vector<std::string>{});
         for (const auto& c : node.value("counters", nlohmann::json::array())) {
@@ -114,6 +127,12 @@ std::string CounterDatabase::slotOf(const std::string& itemId) const
     return it != items_.end() ? it->second.slot : std::string{};
 }
 
+int CounterDatabase::costOf(const std::string& itemId) const
+{
+    const auto it = items_.find(itemId);
+    return it != items_.end() ? costOfTier(it->second.tier) : 0;
+}
+
 std::string CounterDatabase::tipFor(const std::string& itemId) const
 {
     const auto it = items_.find(itemId);
@@ -168,6 +187,16 @@ std::vector<Suggestion> CounterDatabase::suggest(const SuggestInput& input, size
             s.slot = item.slot;
             s.tier = item.tier;
             s.cost = costOfTier(item.tier);
+            s.timing = timingOf(item.tier, input.spentSouls);
+            s.buyMinute = item.buyMinute;
+            for (const auto& component : item.components) {
+                if (input.owned.contains(component)) {
+                    s.upgrades = displayName(component);
+                    s.cost = std::max(0, s.cost - costOf(component));
+                } else {
+                    s.buildFrom.push_back(displayName(component));
+                }
+            }
         }
         out.push_back(std::move(s));
     }
@@ -175,5 +204,6 @@ std::vector<Suggestion> CounterDatabase::suggest(const SuggestInput& input, size
     if (out.size() > maxResults) {
         out.erase(out.begin() + static_cast<std::ptrdiff_t>(maxResults), out.end());
     }
+    std::ranges::stable_sort(out, {}, &Suggestion::timing);
     return out;
 }

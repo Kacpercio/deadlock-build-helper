@@ -61,7 +61,9 @@ int main(int, char** argv)
         // Column layout measured on a real 1080p scoreboard: enemies step right, same height.
         CHECK(l.config.enemyRows.size() == 6);
         CHECK(near(l.config.enemyRows[5].x, 0.5555 + 5 * 0.04586));
-        CHECK(near(l.config.enemyRows[5].y, 0.2890));
+        CHECK(near(l.config.enemyRows[5].y, 0.2741));
+        CHECK(l.config.captureDelayMs == 120 && l.config.rescanDelayMs == 300);
+        CHECK(l.config.panelHoldMs == 5000 && l.config.reminderMinutes == 3);
         CHECK(l.config.allyNames.size() == 6);
         CHECK(near(l.config.allyNames[1].x, 0.4021 - 0.04586));
         CHECK(l.config.hotkeys.menu == 0x79);
@@ -247,6 +249,63 @@ int main(int, char** argv)
         in.owned.insert(before[0].itemId);
         const auto after = db.suggest(in, 6);
         CHECK(std::ranges::none_of(after, [&](const Suggestion& s) { return s.itemId == before[0].itemId; }));
+    }
+
+    {
+        // Buying order: what you can afford soon first, by what you have spent; the rest stays listed.
+        SuggestInput in;
+        in.heroes = {{"haze", 1}};
+        in.items = {{"glass_cannon", 1}, {"health_stimpak", 1}, {"unstoppable", 1}};
+        const auto unknown = db.suggest(in, 8);
+        CHECK(std::ranges::all_of(unknown, [](const Suggestion& s) { return s.timing == BuyTiming::Unknown; }));
+
+        in.spentSouls = 0;
+        const auto early = db.suggest(in, 8);
+        CHECK(std::ranges::is_sorted(early, {}, &Suggestion::timing));
+        for (const auto& s : early) {
+            CHECK(s.timing == (s.tier <= 2 ? BuyTiming::Now : s.tier == 3 ? BuyTiming::Next : BuyTiming::Later));
+        }
+        in.spentSouls = 8000;
+        for (const auto& s : db.suggest(in, 8)) {
+            CHECK(s.timing == (s.tier <= 3 ? BuyTiming::Now : BuyTiming::Next));
+        }
+        in.spentSouls = 20000;
+        for (const auto& s : db.suggest(in, 8)) {
+            CHECK(s.timing == BuyTiming::Now);
+        }
+
+        CHECK(db.costOf("glass_cannon") == 6400);
+        CHECK(db.costOf("nonsense") == 0);
+
+        // Building on an item you own costs less, and says so.
+        CounterDatabase small;
+        CHECK(small.load(writeTemp("dbh_components.json", R"({"items": {
+            "part": {"display": "Part", "slot": "weapon", "tier": 1},
+            "whole": {"display": "Whole", "slot": "weapon", "tier": 3, "buy_minute": 17, "components": ["part"]},
+            "threat": {"display": "Threat", "slot": "spirit", "tier": 2, "weight": 1,
+                       "counters": [{"item": "Whole", "priority": 2, "reason": "Weapon T3 | why"}]}}})")));
+        SuggestInput want;
+        want.items = {{"threat", 1}};
+        const auto plain = small.suggest(want, 3);
+        CHECK(plain.size() == 1 && plain[0].itemId == "whole" && plain[0].cost == 3200 && plain[0].buyMinute == 17);
+        CHECK(plain[0].buildFrom == std::vector<std::string>{"Part"} && plain[0].upgrades.empty());
+        want.owned = {"part"};
+        const auto cheaper = small.suggest(want, 3);
+        CHECK(cheaper.size() == 1 && cheaper[0].cost == 2400 && cheaper[0].upgrades == "Part" && cheaper[0].buildFrom.empty());
+    }
+
+    // ---- What enemies bought since the last look ----------------------------------------------
+    {
+        EnemyPlayer a;
+        a.slot = 0; a.heroId = "haze"; a.hero = "Haze"; a.itemIds = {"x"}; a.items = {"X"};
+        EnemyPlayer later = a;
+        later.itemIds = {"x", "y"}; later.items = {"X", "Y"};
+        CHECK(newPurchases({a}, {later}) == std::vector<std::string>{"Haze bought Y"});
+        CHECK(newPurchases({later}, {a}).empty());       // sold: nothing to warn about
+        CHECK(newPurchases({}, {later}).empty());        // nothing to compare with
+        EnemyPlayer other = later;
+        other.heroId = "abrams";
+        CHECK(newPurchases({a}, {other}).empty());       // another hero: another match
     }
 
     // ---- settings.json: only what differs from config.json, surviving a failed read ----------
